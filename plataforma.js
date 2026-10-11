@@ -2,7 +2,7 @@
    La app (app.js) pide estas capacidades con window.claude.use(nombre); aquí se cumplen con Firebase. */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, signOut } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, setDoc, deleteDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-ai.js';
 
 const firebaseConfig = {
@@ -27,7 +27,7 @@ const ls = { get(k) { try { return localStorage.getItem(k); } catch (e) { return
 const DB = {
   collection: path => ({
     path,
-    doc: id => ({ set: data => setDoc(doc(fdb, path, id), data) }),
+    doc: id => ({ set: data => setDoc(doc(fdb, path, id), data), delete: () => deleteDoc(doc(fdb, path, id)) }),
     onSnapshot: (next, err) => onSnapshot(collection(fdb, path), { includeMetadataChanges: true }, snap => {
       next({ docChanges: () => snap.docChanges(), docs: snap.docs, empty: snap.empty, size: snap.size,
         metadata: { fromCache: snap.metadata.fromCache && snap.empty, hasPendingWrites: snap.metadata.hasPendingWrites } });

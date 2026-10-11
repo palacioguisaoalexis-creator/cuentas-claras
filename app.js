@@ -85,7 +85,29 @@ function persist(id){
     toast(e&&e.code==='quota_exceeded'?'Se llenó el espacio de la app.':'No se pudo guardar. Revisa tu conexión.');});
 }
 let LKEY='cuentas-claras-v2',demo=false;
-function localStore(){return{remote:false,set:(id,data)=>{let all={};try{all=JSON.parse(ls.get(LKEY)||'{}');}catch(e){}all[id]=data;ls.set(LKEY,JSON.stringify(all));return Promise.resolve();}};}
+function localStore(){return{remote:false,set:(id,data)=>{let all={};try{all=JSON.parse(ls.get(LKEY)||'{}');}catch(e){}all[id]=data;ls.set(LKEY,JSON.stringify(all));return Promise.resolve();},
+  del:id=>{let all={};try{all=JSON.parse(ls.get(LKEY)||'{}');}catch(e){}delete all[id];ls.set(LKEY,JSON.stringify(all));return Promise.resolve();}};}
+function respaldo(){return JSON.stringify({app:'Cuentas Claras',version:2,fecha:iso(today()),config:S.config,saldos:S.saldos,deudas:S.deudas,ciclos:S.cycles},null,1);}
+async function descargarRespaldo(btn){if(!dlFn){toast('La descarga no está disponible aquí');return false;}try{await dlFn.save({filename:`cuentas-claras-respaldo-${iso(today())}.json`,data:respaldo()});toast('Copia descargada');return true;}catch(e){toast(e?.code==='declined'?'Descarga cancelada':'No se pudo descargar');return false;}}
+function sheetBorrarTodo(){
+  const nMov=Object.values(S.cycles).reduce((a,c)=>a+(c.movs||[]).length,0);
+  openSheet(`<div class="stack"><h2>Borrar todo y empezar de cero</h2>
+    <p>Se borran <b>todos tus datos</b>: configuración, cuentas y saldos, deudas y tarjetas, metas, gastos programados y ${nMov} movimiento${nMov===1?'':'s'}. Luego la app arranca como nueva, con el asistente. Sigues con la sesión iniciada.</p>
+    <div class="note bad">Esto no se puede deshacer.</div>
+    ${dlFn?`<button class="btn ghost" id="bzCopia">Descargar una copia antes (opcional)</button>`:''}
+    <label class="f" for="bzTxt">Para confirmar, escribe BORRAR<input id="bzTxt" autocomplete="off" autocapitalize="characters" placeholder="BORRAR"></label>
+    <button class="btn danger" id="bzOk" disabled>Borrar todo</button><button class="btn ghost" id="bzNo">Cancelar</button></div>`,sh=>{
+    $('#bzNo').onclick=closeSheet;const c=$('#bzCopia');if(c)c.onclick=()=>descargarRespaldo(c);
+    $('#bzTxt').addEventListener('input',e=>{$('#bzOk').disabled=e.target.value.trim().toUpperCase()!=='BORRAR';});
+    $('#bzOk').onclick=async()=>{const b=$('#bzOk');b.disabled=true;b.textContent='Borrando…';
+      try{await Promise.all(Object.values(queues));}catch(e){}
+      const ids=['config','saldos','deudas',...Object.keys(S.cycles).map(k=>'c-'+k)];
+      try{await Promise.all(ids.map(id=>store&&store.del?store.del(id):Promise.resolve()));}
+      catch(e){b.disabled=false;b.textContent='Borrar todo';toast('No se pudo borrar todo. Revisa tu conexión e intenta de nuevo.');return;}
+      try{for(const k of Object.keys(localStorage))if(/^cc-src-/.test(k))localStorage.removeItem(k);}catch(e){}
+      S.config=null;S.saldos=null;S.deudas=null;S.cycles={};setupStep=0;built.setup=false;built.ajustes=false;built.ai=false;turns=[];extNode=null;tab='hoy';viewKey=null;proj={pago:null,extra:0};
+      $$('nav.tabs [data-tab]').forEach(x=>x.dataset.tab==='hoy'?x.setAttribute('aria-current','page'):x.removeAttribute('aria-current'));
+      closeSheet();window.scrollTo({top:0});render();toast('Listo. Empecemos de cero');};});}
 let unsub=null;
 function usarLocal(msg){if(store&&!store.remote)return;if(unsub){try{unsub();}catch(e){}unsub=null;}store=localStore();
   let raw=null;try{raw=JSON.parse(ls.get(LKEY)||'null');}catch(e){}
@@ -110,7 +132,7 @@ async function initStore(){
   try{if(window.claude){[db,user]=await Promise.all([window.claude.use('db'),window.claude.use('user')]);}}catch(e){}
   try{me=user?await user.id():null;}catch(e){me=null;}
   if(db&&me){
-    const col=db.collection('data/users/'+me); store={remote:true,set:(id,data)=>col.doc(id).set(data)};
+    const col=db.collection('data/users/'+me); store={remote:true,set:(id,data)=>col.doc(id).set(data),del:id=>col.doc(id).delete()};
     unsub=col.onSnapshot(snap=>{if(!store.remote)return;for(const ch of snap.docChanges()){applyDoc(ch.doc.id,ch.type==='removed'?null:JSON.parse(JSON.stringify(ch.doc.data())));}if(!snap.metadata.fromCache)loaded=true;render();},
       ()=>banner('Se cortó la conexión con tus datos. Recarga la página.'));
   }else usarLocal('Modo sin conexión: lo que registres queda solo en este dispositivo. Inicia sesión para guardar en la nube.');
@@ -909,7 +931,9 @@ function renderAjustes(){
   if(built.ajustes)return;built.ajustes=true;const v=$('#view-ajustes');
   v.innerHTML=`<h2>Ajustes</h2>${['perfil','ingresos','cuentas','fijos','deudas','categorias','atajos','fuentes','personas','cobros','metas','topes','general'].map(k=>seccionCard(k,false)).join('')}
    <section class="card stack"><h2>Probar desde cero</h2><p class="muted small">Abre la app vacía, como la vería una persona nueva, sin tocar tus datos. Ideal para probar el asistente o mostrársela a alguien. Al salir se borra la prueba.</p><button class="btn ghost" data-action="demo">Entrar al modo prueba</button></section>
-   <section class="card stack"><h2>Empezar de cero</h2><p class="muted small">Borra la configuración y vuelve al asistente. Tus movimientos se quedan guardados.</p><button class="btn danger" id="reset">Volver al asistente</button></section>`;
+   <section class="card stack"><h2>Volver a configurar</h2><p class="muted small">Repite el asistente para cambiar tu configuración. No borra nada: tus movimientos, cuentas y deudas se quedan.</p><button class="btn ghost" id="reset">Volver al asistente</button></section>
+   <section class="card stack"><h2>Copia de tus datos</h2><p class="muted small">Descarga un archivo con toda tu información, por si quieres guardarla.</p><button class="btn ghost" data-action="respaldo">Descargar copia</button></section>
+   <section class="card stack" style="border:1px solid var(--debt-soft)"><h2>Borrar todo y empezar de cero</h2><p class="muted small">¿Se te acumularon cosas sin registrar y prefieres arrancar limpio? Borra toda tu historia y la app queda como nueva, sin cerrar sesión.</p><button class="btn danger" data-action="borrarTodo">Borrar todos mis datos</button></section>`;
   bindEds(v);$$('[data-sec]',v).forEach(sec=>SECCIONES[sec.dataset.sec].mount?.(sec));
   $$('[data-save]',v).forEach(b=>b.onclick=()=>{const sec=b.closest('[data-sec]');guardarSeccion(b.dataset.save,sec,false);toast('Guardado');proj.pago=null;if(['ingresos','categorias','cuentas','deudas'].includes(b.dataset.save)){built.ajustes=false;render();}});
   $('#reset').onclick=e=>{const b=e.currentTarget;if(b.dataset.c){S.config.onboarded=false;persist('config');setupStep=0;built.setup=false;render();}else{b.dataset.c=1;b.textContent='Toca otra vez para confirmar';}};
@@ -956,6 +980,8 @@ document.addEventListener('click',e=>{
   else if(action==='progEditar')sheetProg(id);
   else if(action==='tarjeta')sheetTarjeta(id);
   else if(action==='nuevaDeuda')sheetDeuda(null);
+  else if(action==='borrarTodo')sheetBorrarTodo();
+  else if(action==='respaldo')descargarRespaldo(a);
   else if(action==='editarDeuda')sheetDeuda(id);
   else if(action==='demo')entrarDemo();
   else if(action==='salirDemo')salirDemo();
