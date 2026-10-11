@@ -156,7 +156,7 @@ function cobrosDe(k){const c=C(k),out=[];for(const x of cfg().cobros||[]){const 
 function obligaciones(k){
   const c=C(k),cobs=cobrosDe(k),out=[];
   for(const f of cfg().fijos||[]){const due=dueIn(k,f.dia);if(!due)continue;out.push({id:f.id,nombre:f.nombre,dia:f.dia,propio:c.montos[f.id]??f.monto,fam:0,monto:c.montos[f.id]??f.monto,due,estado:c.pagados[f.id]||null,extra:false,cuenta:f.cuenta});}
-  for(const d of deudas()){const due=dueIn(k,d.dia);if(!due)continue;if(d.saldo<=0&&!c.pagados[d.id])continue;
+  for(const d of deudas()){if(d.plan){out.push(...obligacionesPlan(d,k));continue;}const due=dueIn(k,d.dia);if(!due)continue;if(d.saldo<=0&&!c.pagados[d.id])continue;
     const propio=c.montos[d.id]??(d.tipo==='prestamo'?Math.min(d.pago||0,d.saldo):d.pago||0);const fam=cobs.filter(x=>x.destino===d.id).reduce((a,x)=>a+x.monto,0);
     out.push({id:d.id,nombre:'Pago '+d.nombre,dia:d.dia,propio,fam,monto:propio+fam,due,estado:c.pagados[d.id]||null,extra:false,deudaId:d.id});}
   for(const x of c.extras){const due=dueIn(k,x.dia)||cStart(k);out.push({...x,propio:x.monto,fam:0,due,estado:c.pagados[x.id]||null,extra:true});}
@@ -219,7 +219,7 @@ function proyectar(P,extra){
   return{pts,fin:null,intereses:int,ok:false};
 }
 function finLabel(p){return p.fin?mlabel(cEnd(p.fin)):'—';}
-function prestamosFin(){return deudas().filter(d=>d.tipo==='prestamo'&&d.saldo>0&&d.pago>0).map(d=>{let n=Math.ceil(d.saldo/d.pago);let k=curKey();if(C(k).pagados[d.id]||!dueIn(k,d.dia)||dueIn(k,d.dia)<today())k=addCycle(k,1);let cnt=0,kk=k;for(let i=0;i<60&&cnt<n;i++){kk=addCycle(k,i);if(dueIn(kk,d.dia))cnt++;}return{d,n,fecha:dueIn(kk,d.dia)};});}
+function prestamosFin(){return deudas().filter(d=>d.tipo==='prestamo'&&d.saldo>0&&(d.pago>0||d.plan)).map(d=>{if(d.plan){const pl=planDeuda(d);return pl.length?{d,n:pl.length,fecha:pl[pl.length-1].f}:null;}let n=Math.ceil(d.saldo/d.pago);let k=curKey();if(C(k).pagados[d.id]||!dueIn(k,d.dia)||dueIn(k,d.dia)<today())k=addCycle(k,1);let cnt=0,kk=k;for(let i=0;i<60&&cnt<n;i++){kk=addCycle(k,i);if(dueIn(kk,d.dia))cnt++;}return{d,n,fecha:dueIn(kk,d.dia)};}).filter(Boolean);}
 function promExtra(fid){const all=Object.values(S.cycles).flatMap(c=>c.movs).filter(v=>v.t==='extra'&&(!fid||v.fuente===fid));if(!all.length)return null;return{prom:all.reduce((a,v)=>a+v.monto,0)/all.length,n:all.length};}
 function gastosDia(h){return Object.values(S.cycles).flatMap(c=>c.movs).filter(v=>v.t==='gasto'&&v.fecha===h&&!(v.fx||[]).some(f=>f.k==='deuda')).reduce((a,v)=>a+v.monto,0);}
 function puedesHoy(){if(!S.config)return null;const k=curKey(),r=resumen(k);const dias=Math.max(1,Math.round((cEnd(k)-today())/DAY)+1);const gh=gastosDia(iso(today()));const md=metaDiaria(r);
@@ -421,14 +421,81 @@ function renderDeudas(){
     <div id="chartBox">${chartSVG(a,proj.extra?b:null)}</div><div class="muted small" id="projTxt">${projTxt(a,b)}</div>
     <div class="muted" style="font-size:.78rem">Incluye la plata que otros te pasan, cuota de manejo y cargos fijos. Es un estimado: corrígelo con cada extracto.</div></section>`:''}
   <section class="card stack"><div class="row"><h2>Leer un extracto</h2></div><p class="muted small">Sube el PDF del extracto o capturas de la app del banco. Saco saldo, mínimo, fecha y compras, y tú decides si actualizo la deuda.</p><div id="extHost"></div></section>
-  ${ds.map(d=>`<section class="card stack"><div class="row"><div><h2>${esc(d.nombre)}</h2><div class="muted small">${d.tipo==='tarjeta'?`${((d.tasa||0)*100).toFixed(2)}% mensual · pagas ${fmt(d.pago)} el ${d.dia}`:`Cuota ${fmt(d.pago)} el ${d.dia}`}</div></div><div style="text-align:right"><div class="label">Saldo</div><div class="amt" style="font-size:1.25rem;color:var(--debt)">${fmt(d.saldo)}</div></div></div>
+  <div class="row"><h2>Tus deudas</h2><button class="btn sm" data-action="nuevaDeuda">+ Agregar deuda</button></div>
+  ${ds.map(d=>{const pr=d.plan?planResumen(d):null;return `<section class="card stack"><div class="row"><div><h2>${esc(d.nombre)}</h2><div class="muted small">${d.tipo==='tarjeta'?`${((d.tasa||0)*100).toFixed(2)}% mensual · pagas ${fmt(d.pago)} el ${d.dia}`:d.plan?(pr?`Próximo pago ${fmt(pr.prox.monto)} el ${fdate(pr.prox.f)} · faltan ${pr.n} de ${pr.tot} cuotas · sale de ${esc(cuentaN(d.cuenta))}`:'Pagada'):`Cuota ${fmt(d.pago)} el ${d.dia}`}</div></div><div style="text-align:right"><div class="label">Saldo</div><div class="amt" style="font-size:1.25rem;color:var(--debt)">${fmt(d.saldo)}</div></div></div>
     ${d.minimo?`<div class="muted small">Último mínimo del banco: ${fmt(d.minimo)}</div>`:''}${d.nota?`<div class="muted small">${esc(d.nota)}</div>`:''}${d.actualizado?`<div class="muted" style="font-size:.78rem">Saldo revisado el ${fdate(parseISO(d.actualizado))}</div>`:''}
     ${d.tipo==='tarjeta'?(()=>{const cs=compras(d).filter(c=>c.saldo>0);const otros=cs.filter(c=>duenos(c).some(o=>o.p!=='yo'));const P=planTarjeta(d);const ajeno=Object.keys(P).filter(p=>p!=='yo').reduce((a,p)=>a+(P[p][0]||0),0);
       return cs.length?`<div class="small">${cs.length} compras${otros.length?` · ${otros.length} compartidas · este mes te pasan ${fmt(ajeno)}`:''}</div>`:'';})():''}
-    <div class="btns">${d.tipo==='tarjeta'?`<button class="btn sm" data-action="tarjeta" data-id="${esc(d.id)}">Compras y quién paga</button>`:''}<button class="btn ${d.tipo==='tarjeta'?'ghost ':''}sm" data-action="abonar" data-id="${esc(d.id)}">Abonar extra</button><button class="btn ghost sm" data-action="saldo" data-id="${esc(d.id)}">Corregir saldo</button></div></section>`).join('')||'<div class="card empty">No tienes deudas registradas. Agrégalas en Ajustes.</div>'}`;
+    <div class="btns">${d.tipo==='tarjeta'?`<button class="btn sm" data-action="tarjeta" data-id="${esc(d.id)}">Compras y quién paga</button>`:''}<button class="btn ${d.tipo==='tarjeta'?'ghost ':''}sm" data-action="abonar" data-id="${esc(d.id)}">Abonar extra</button><button class="btn ghost sm" data-action="saldo" data-id="${esc(d.id)}">Corregir saldo</button><button class="btn ghost sm" data-action="editarDeuda" data-id="${esc(d.id)}">Editar</button></div>
+    ${pr&&pr.n>1?`<details><summary class="small">Ver plan de pagos</summary><div class="list">${planDeuda(d).map(x=>`<div class="item"><div class="grow"><div class="t">Cuota ${x.i+1}</div><div class="s">${fdate(x.f)} ${x.f.getFullYear()}</div></div><span class="amt">${fmt(x.monto)}</span></div>`).join('')}</div></details>`:''}</section>`;}).join('')||'<div class="card empty">No tienes deudas registradas. Toca "+ Agregar deuda".</div>'}`;
   if(!extNode){extNode=document.createElement('div');mountExtracto(extNode,()=>render());}$('#extHost').appendChild(extNode);
   const up=$('#pPago');if(up){const upd=()=>{proj.pago=Number($('#pPago').value);proj.extra=Number($('#pExtra').value);$('#pPagoV').textContent=fmt(proj.pago);$('#pExtraV').textContent=fmt(proj.extra);const x=proyectar(proj.pago,0),y=proyectar(proj.pago,proj.extra);$('#chartBox').innerHTML=chartSVG(x,proj.extra?y:null);$('#projTxt').innerHTML=projTxt(x,y);$('#pPill').textContent=y.ok?finLabel(y):'No alcanza';$('#pPill').className='pill '+(y.ok?'ok':'bad');};up.oninput=upd;$('#pExtra').oninput=upd;}
 }
+/* ===== préstamos y deudas personales con plan de cuotas ===== */
+const CADA_D=[['pago','Cada pago de sueldo'],['quincena','Cada quincena'],['mes','Cada mes'],['semana','Cada semana']];
+function diasPeriodo(p){return p.cada==='semana'?7:p.cada==='quincena'?15:p.cada==='pago'?30/paydays().length:30;}
+const rPlan=d=>d.plan&&d.tasa?d.tasa*diasPeriodo(d.plan)/30:0;
+function fechasPlan(d){const p=d.plan;if(!p||!p.inicio)return[];const out=[];let x=parseISO(p.inicio);const d0=x.getDate();
+  if(p.cada==='pago'){const s=startOf(x);if(iso(s)!==iso(x))x=nextStart(s);}
+  else if(p.cada==='quincena'){const y=x.getFullYear(),m=x.getMonth();x=[new Date(y,m,15),new Date(y,m,daysIn(y,m))].find(z=>z>=x)||new Date(y,m+1,15);}
+  for(let i=0;i<Math.min(p.cuotas||1,240);i++){out.push(x);
+    if(p.cada==='semana')x=addDays(x,7);
+    else if(p.cada==='mes'){const nm=new Date(x.getFullYear(),x.getMonth()+1,1);x=new Date(nm.getFullYear(),nm.getMonth(),Math.min(d0,daysIn(nm.getFullYear(),nm.getMonth())));}
+    else if(p.cada==='quincena'){const y=x.getFullYear(),m=x.getMonth();x=[new Date(y,m,15),new Date(y,m,daysIn(y,m)),new Date(y,m+1,15)].find(z=>z>x);}
+    else x=nextStart(x)||addDays(x,30);}
+  return out;}
+function pagadosPlan(d){const s=new Set();for(const c of Object.values(S.cycles))for(const[k,v]of Object.entries(c.pagados||{}))if(k.startsWith(d.id+'#')&&v&&!v.aplazado)s.add(Number(k.split('#')[1]));return s;}
+function planDeuda(d,saldoOver){const fs=fechasPlan(d),paid=pagadosPlan(d);const pend=fs.map((f,i)=>({i,f})).filter(x=>!paid.has(x.i));const n=pend.length;const saldo=Math.max(0,saldoOver??d.saldo??0);if(!n||!saldo)return[];
+  const r=rPlan(d);let cuota=r?saldo*r/(1-Math.pow(1+r,-n)):saldo/n;cuota=Math.ceil(cuota/1000)*1000;
+  if(r)return pend.map(x=>({...x,monto:Math.round(cuota)}));
+  let q=saldo;return pend.map((x,j)=>{const m=j===n-1?q:Math.min(q,cuota);q-=m;return{...x,monto:Math.round(m)};}).filter(x=>x.monto>0);}
+function obligacionesPlan(d,k){const c=C(k),s=cStart(k),e=cEnd(k),out=[];const fs=fechasPlan(d);const tot=fs.length;const quien=d.acreedor?personaN(d.acreedor):'';
+  const base={dia:null,deudaId:d.id,extra:false,fam:0,cuenta:d.cuenta||null};
+  fs.forEach((f,i)=>{const id=d.id+'#'+i;const est=c.pagados[id];if(est&&f>=s&&f<=e)out.push({...base,id,nombre:`${d.nombre} (${i+1}/${tot})`,propio:est.monto||0,monto:est.monto||0,due:f,estado:est});});
+  for(const x of planDeuda(d)){const id=d.id+'#'+x.i;if(c.pagados[id])continue;const enCiclo=x.f>=s&&x.f<=e;const atrasado=k===curKey()&&x.f<s;
+    if(enCiclo||atrasado)out.push({...base,id,nombre:`${d.nombre} (${x.i+1}/${tot})`,propio:x.monto,monto:x.monto,due:x.f,estado:null});}
+  return out;}
+function planResumen(d){const pl=planDeuda(d);if(!pl.length)return null;return{prox:pl[0],fin:pl[pl.length-1].f,n:pl.length,tot:(d.plan?.cuotas)||pl.length};}
+function sheetDeuda(id){const d0=id?deuda(id):null;const esPlan=!d0||!!d0.plan;const tipo0=d0?.tipo==='tarjeta'?'tarjeta':'prestamo';
+  const p=d0?.plan||{cuotas:2,cada:'pago',inicio:iso(nextStart(today())||addDays(today(),15))};
+  const persOpts=()=>`<option value="">Otra persona o entidad</option>${(cfg().personas||[]).map(x=>`<option value="${esc(x.id)}" ${d0?.acreedor===x.id?'selected':''}>${esc(x.nombre)}</option>`).join('')}`;
+  openSheet(`<div class="stack"><h2>${id?'Editar deuda':'Nueva deuda'}</h2>
+    ${id?'':`<div class="seg" id="dT">${segBtns([['prestamo','Préstamo o deuda personal'],['tarjeta','Tarjeta de crédito']],'prestamo')}</div>`}
+    <div id="dP" class="stack" style="gap:10px" ${tipo0==='tarjeta'?'hidden':''}>
+      <div class="grid2"><label class="f">¿A quién le debes?<select id="dQ">${persOpts()}</select></label><label class="f" id="dQnBox">Nombre<input id="dQn" placeholder="Ej: Papá, Bancamía" value="${esc(d0&&!d0.acreedor?d0.nombre.replace(/^Préstamo (de |a )?/,''):'')}"></label></div>
+      <div class="grid2"><label class="f">${id?'Lo que debes hoy':'¿Cuánto te prestaron?'}<input id="dM" inputmode="numeric" value="${d0?fmt(d0.saldo):''}" placeholder="$0"></label><label class="f">${id?'Cuotas en total':'¿En cuántas cuotas?'}<input id="dN" inputmode="numeric" data-plain value="${p.cuotas||2}"></label></div>
+      <div class="label">¿Cada cuánto pagas?</div><div class="seg" id="dC">${segBtns(CADA_D.map(([v,n])=>[v,n.replace('Cada ','')]),p.cada||'pago')}</div>
+      <div class="grid2"><label class="f">Primer pago<input id="dF" type="date" value="${esc(p.inicio)}"></label><label class="f">Interés mensual % (opcional)<input id="dI" inputmode="decimal" value="${d0?.tasa?(d0.tasa*100).toFixed(2):''}" placeholder="0"></label></div>
+      <label class="f">¿De dónde sale la plata?<select id="dS">${(cfg().cuentas||[]).map(c=>`<option value="${esc(c.id)}" ${(d0?.cuenta||cfg().ingreso.cuenta)===c.id?'selected':''}>${esc(c.nombre)}${c.id===cfg().ingreso.cuenta&&conSueldo()?' (donde te llega el sueldo)':''}</option>`).join('')}</select></label>
+      <div id="dPlan" class="note ok"></div>
+    </div>
+    <div id="dK" class="stack" style="gap:10px" ${tipo0==='tarjeta'?'':'hidden'}>
+      <label class="f">Nombre de la tarjeta<input id="kN" value="${esc(d0?.tipo==='tarjeta'?d0.nombre:'')}" placeholder="Visa *1234"></label>
+      <div class="grid2"><label class="f">Saldo hoy<input id="kS" inputmode="numeric" value="${d0?.tipo==='tarjeta'?fmt(d0.saldo):''}" placeholder="$0"></label><label class="f">Día de pago<input id="kD" inputmode="numeric" data-plain value="${d0?.dia||5}"></label>
+      <label class="f">Pago que planeas al mes<input id="kP" inputmode="numeric" value="${d0?.pago?fmt(d0.pago):''}" placeholder="$0"></label><label class="f">Interés mensual %<input id="kI" inputmode="decimal" value="${d0?.tasa?(d0.tasa*100).toFixed(4):'2.15'}"></label></div>
+      <p class="muted small">Después puedes subir el extracto para cargar las compras y repartirlas.</p>
+    </div>
+    <button class="btn" id="dOk">Guardar</button>${id?'<button class="btn danger" id="dDel">Eliminar deuda</button>':''}</div>`,sh=>{
+    let tipo=tipo0;
+    const t=$('#dT');if(t)t.addEventListener('click',e=>{const b=e.target.closest('[data-seg]');if(!b)return;tipo=b.dataset.seg;$$('#dT [data-seg]').forEach(z=>z.setAttribute('aria-pressed',z===b));$('#dP').hidden=tipo!=='prestamo';$('#dK').hidden=tipo!=='tarjeta';});
+    $('#dC').addEventListener('click',e=>{const b=e.target.closest('[data-seg]');if(!b)return;$$('#dC [data-seg]').forEach(z=>z.setAttribute('aria-pressed',z===b));prev();});
+    const leer=()=>{const q=$('#dQ').value;const nom=q?personaN(q):$('#dQn').value.trim();return{acreedor:q||null,nombre:nom?(id&&d0&&!d0.plan?d0.nombre:`Préstamo de ${nom}`):'',saldo:num($('#dM').value),tasa:dec($('#dI').value)/100,cuenta:$('#dS').value,
+      plan:{cuotas:Math.max(1,num($('#dN').value)||1),cada:$('#dC [aria-pressed="true"]').dataset.seg,inicio:$('#dF').value||iso(today())}};};
+    const prev=()=>{$('#dQnBox').hidden=!!$('#dQ').value;const x=leer();if(!x.saldo){$('#dPlan').textContent='Escribe el valor para ver el plan.';return;}
+      const tmp={id:d0?.id||'tmp',saldo:x.saldo,tasa:x.tasa,plan:x.plan};const pl=planDeuda(tmp);const ct=pl.length;
+      $('#dPlan').innerHTML=ct?`<b>${ct} pago${ct>1?'s':''}</b> de ${fmt(pl[0].monto)}${ct>1&&pl[ct-1].monto!==pl[0].monto?` (el último ${fmt(pl[ct-1].monto)})`:''} desde ${esc(cuentaN(x.cuenta))}:<br>${pl.slice(0,8).map(z=>`${fdate(z.f)} ${fmt(z.monto)}`).join(' · ')}${ct>8?' …':''}<br>Terminas el ${fdate(pl[ct-1].f)} de ${pl[ct-1].f.getFullYear()}.`:'Ya está pagada.';};
+    sh.addEventListener('input',prev);sh.addEventListener('change',prev);prev();
+    $('#dOk').onclick=()=>{if(!S.deudas)S.deudas={items:[]};
+      if(tipo==='tarjeta'){const n=$('#kN').value.trim(),s=num($('#kS').value);if(!n)return toast('Pon el nombre de la tarjeta');const obj={tipo:'tarjeta',nombre:n,saldo:s,dia:Math.min(31,Math.max(1,num($('#kD').value)||5)),pago:num($('#kP').value),tasa:dec($('#kI').value)/100,actualizado:iso(today())};
+        if(d0)Object.assign(d0,obj);else{S.deudas.items.push({id:'d-'+uid(),...obj});S.config.deudaInicial=(S.config.deudaInicial||0)+s;persist('config');}}
+      else{const x=leer();if(!x.nombre||!x.saldo)return toast('Pon a quién le debes y cuánto');
+        if(d0){if(d0.plan&&(d0.plan.inicio!==x.plan.inicio||d0.plan.cada!==x.plan.cada)&&pagadosPlan(d0).size)return toast('Ya hiciste pagos: cambia las cuotas o el valor, no la fecha ni la frecuencia');
+          Object.assign(d0,{...x,tipo:'prestamo',dia:parseISO(x.plan.inicio).getDate(),pago:planDeuda({...d0,...x})[0]?.monto||0,actualizado:iso(today())});
+          if(d0.plan)d0.plan.cuotas=Math.max(d0.plan.cuotas,pagadosPlan(d0).size+1);}
+        else{const nd={id:'d-'+uid(),tipo:'prestamo',...x,dia:parseISO(x.plan.inicio).getDate(),actualizado:iso(today())};nd.pago=planDeuda(nd)[0]?.monto||0;S.deudas.items.push(nd);S.config.deudaInicial=(S.config.deudaInicial||0)+x.saldo;persist('config');}}
+      persist('deudas');closeSheet();toast('Deuda guardada');render();};
+    const dl=$('#dDel');if(dl)dl.onclick=()=>{if(!dl.dataset.c){dl.dataset.c=1;dl.textContent='Toca otra vez para eliminar';return;}S.deudas.items=deudas().filter(z=>z.id!==id);persist('deudas');closeSheet();toast('Deuda eliminada');render();};});}
+
 /* ===== tarjetas: compras, compartidos y trazabilidad ===== */
 const personas=()=>[{id:'yo',nombre:'Yo'},...(cfg().personas||[])];
 const personaN=id=>personas().find(p=>p.id===id)?.nombre||'Alguien';
@@ -708,7 +775,7 @@ const bindForm={
       addMov({id:uid(),t:'extra',fuente:f.id,bruto,deducciones:ded,monto:n,horas:Math.min(24,dec($('#xH').value))||0,fecha:$('#xF').value||iso(today()),fx:n>0?fxFromParts(pr.parts,1):[]});closeSheet();render();if(n>0)sheetReparto(f,n);else toast('Guardado');};
     setTimeout(()=>$('#xB')?.focus(),30);},
   pago(nf){const upd=()=>{const v=$('#pQ').value;const[tp,a,b]=v.split(':');let m=0,info='';$('#pLater').hidden=true;
-      if(tp==='o'){const o=obligaciones(a).find(x=>x.id===b);if(o){m=o.monto;if(o.fam)info=`<div class="note ok">Incluye ${fmt(o.fam)} que te pasan. Tu parte: ${fmt(o.propio)}.</div>`;if(o.deudaId&&esTarjeta(o.deudaId)&&!o.extra)info+='<div class="muted small">Le descuento esto a la tarjeta y le sumo el interés del mes. Con el extracto corriges el saldo exacto.</div>';$('#pLater').hidden=o.extra;}}
+      if(tp==='o'){const o=obligaciones(a).find(x=>x.id===b);if(o){m=o.monto;const cta=o.cuenta||(o.deudaId&&deuda(o.deudaId)?.cuenta);if(cta){const w=$('[data-payer="pago"]',nf);const bt=w&&$(`[data-src="cuenta:${cta}"]`,w);if(bt&&bt.getAttribute('aria-pressed')!=='true')bt.click();}if(o.fam)info=`<div class="note ok">Incluye ${fmt(o.fam)} que te pasan. Tu parte: ${fmt(o.propio)}.</div>`;if(o.deudaId&&esTarjeta(o.deudaId)&&!o.extra)info+='<div class="muted small">Le descuento esto a la tarjeta y le sumo el interés del mes. Con el extracto corriges el saldo exacto.</div>';$('#pLater').hidden=o.extra;}}
       else if(tp==='a')info='<div class="muted small">Abono por encima del pago del mes. Pide que sea a capital reduciendo plazo.</div>';
       else info='<div class="muted small">Queda apartado: no cuenta como plata libre hasta que lo uses.</div>';
       $('#pM').value=m?fmt(m):'';$('#pInfo').innerHTML=info;$('[data-payer="pago"]',nf).hidden=tp==='m';};
@@ -717,7 +784,7 @@ const bindForm={
       if(tp==='m'){addMov({id:uid(),t:'apartar',metaId:a,monto:m,fecha:f,fx:[{k:'meta',id:a,d:m}]});closeSheet();toast('Apartado');render();return;}
       const pr=readPayer(nf,'pago',m);if(pr.err)return toast(pr.err);const fx=fxFromParts(pr.parts,-1);
       if(tp==='a'){const d=deuda(a);fx.push({k:'deuda',id:a,d:-Math.min(m,d?.saldo||m)});addMov({id:uid(),t:'abono',deudaId:a,monto:m,fecha:f,fx});}
-      else{const o=obligaciones(a).find(x=>x.id===b);if(!o)return;if(o.deudaId){const d=deuda(o.deudaId);if(d){const nuevo=(!o.extra&&d.tipo==='tarjeta')?d.saldo*(1+(d.tasa||0))-m:d.saldo-m;fx.push({k:'deuda',id:d.id,d:Math.round(Math.max(0,nuevo)-d.saldo)});}}
+      else{const o=obligaciones(a).find(x=>x.id===b);if(!o)return;if(o.deudaId){const d=deuda(o.deudaId);if(d){const nuevo=(!o.extra&&d.tipo==='tarjeta')?d.saldo*(1+(d.tasa||0))-m:(d.plan&&d.tasa?d.saldo*(1+rPlan(d))-m:d.saldo-m);fx.push({k:'deuda',id:d.id,d:Math.round(Math.max(0,nuevo)-d.saldo)});}}
         const id=uid();C(a).pagados[o.id]={monto:m,fecha:f,mov:id};C(a).movs.push({id,t:'pago',ref:o.id,nombre:o.nombre,monto:m,fecha:f,deudaId:o.deudaId||null,fx});applyFx(fx);saveC(a);}
       closeSheet();toast('Registrado');render();};
     $('#pLater').onclick=()=>{const[,a,b]=$('#pQ').value.split(':');const o=obligaciones(a).find(x=>x.id===b);if(!o)return;C(a).pagados[o.id]={aplazado:true};const nk=addCycle(a,1);C(nk).extras.push({id:'ap-'+o.id+'-'+a,nombre:o.nombre+' (aplazado)',monto:o.monto,dia:cStart(nk).getDate(),deudaId:o.deudaId||null});saveC(a);saveC(nk);closeSheet();toast('Pasado al siguiente ciclo');render();};},
@@ -888,6 +955,8 @@ document.addEventListener('click',e=>{
   else if(action==='midia')sheetNuevo('extra');
   else if(action==='progEditar')sheetProg(id);
   else if(action==='tarjeta')sheetTarjeta(id);
+  else if(action==='nuevaDeuda')sheetDeuda(null);
+  else if(action==='editarDeuda')sheetDeuda(id);
   else if(action==='demo')entrarDemo();
   else if(action==='salirDemo')salirDemo();
   else if(action==='progApartar')sheetProgApartar(id);
