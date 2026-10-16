@@ -746,7 +746,7 @@ function buildAI(){
   for(const t of turns)bubble(t.role==='user'?'me':'ai',t.shown||t.content);
 }
 function bubble(w,t){const d=document.createElement('div');d.className='bubble '+w+(w==='ai'?' ai-out':'');if(w==='ai')d.innerHTML=md(t);else d.textContent=t;$('#chat').appendChild(d);return d;}
-function aiErr(e){const c=e?.code;const det=e?.message?` (Detalle: ${String(e.message).slice(0,180)})`:'';
+function aiErr(e){const c=e?.code;const ver=document.documentElement.dataset.v?` [v${document.documentElement.dataset.v}]`:'';const det=(e?.message?` (Detalle: ${String(e.message).slice(0,220)})`:'')+ver;
   if(c==='cancelled')return '';if(c==='not_granted')return 'No aceptaste usar el asistente con IA. Puedes aceptarlo la próxima vez que lo uses.';
   if(c==='rate_limited')return 'Se alcanzó el límite gratis de consultas por ahora. Espera un rato e intenta de nuevo.';
   if(c==='session_expired')return 'Tu sesión expiró. Vuelve a iniciar sesión.';

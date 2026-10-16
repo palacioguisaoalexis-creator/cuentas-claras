@@ -4,7 +4,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.0.0/firebas
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, signOut } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, setDoc, deleteDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-ai.js';
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app-check.js';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app-check.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDchcJkzpQZeEgfsrq-WPnX4-SD7dIsoto',
@@ -18,7 +18,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 /* App Check con Fraud Defense (reCAPTCHA Enterprise): demuestra que las llamadas a la IA vienen de esta página y no de un robot. */
 const RECAPTCHA_SITE_KEY = '6LeWsvItAAAAADnCiAIs-ywkCU552rxlKRDV74ym';
-try { initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true }); } catch (e) { console.error('App Check', e); }
+let appCheck = null;
+try { appCheck = initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true }); } catch (e) { console.error('App Check', e); }
 const auth = getAuth(app);
 auth.languageCode = 'es';
 const fdb = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
@@ -84,6 +85,8 @@ function tipoError(e) {
 }
 async function SAMPLE(input, opts = {}) {
   if (!aceptoIA()) throw { code: 'not_granted', message: 'El usuario no aceptó usar la IA.' };
+  if (appCheck) { try { await getToken(appCheck, false); } catch (e) { console.error('App Check token', e); throw { code: 'appcheck', message: 'No se obtuvo el certificado App Check: ' + String(e?.message || e).slice(0, 220) }; } }
+  else throw { code: 'appcheck', message: 'App Check no se inició en esta página.' };
   const contents = await contenidos(input, opts.images);
   const pref = ls.get('cc-modelo');
   const orden = pref ? [pref, ...MODELOS.filter(m => m !== pref)] : MODELOS;
