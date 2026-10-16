@@ -461,7 +461,7 @@ function renderDeudas(){
     <div id="chartBox">${chartSVG(a,proj.extra?b:null)}</div><div class="small" id="projTxt">${projTxt(a,b)}</div>
     <div class="muted" style="font-size:.78rem">Lo extra va primero a la deuda con más interés. Incluye cuotas de préstamos, la plata que otros te pasan, cuota de manejo y cargos fijos. Es un estimado: corrígelo con cada extracto.</div></section>`:''}
   ${progsHTML()}
-  <section class="card stack"><div class="row"><h2>Leer un extracto</h2></div><p class="muted small">Sube el PDF del extracto o capturas de la app del banco. Saco saldo, mínimo, fecha y compras, y tú decides si actualizo la deuda.</p><div id="extHost"></div></section>
+  <section class="card stack"><div class="row"><h2>Leer un extracto</h2></div><p class="muted small">Sube el PDF del extracto o el Excel de movimientos que descargas del banco. Saco saldo, mínimo, fecha y compras, y tú decides si actualizo la deuda.</p><div id="extHost"></div></section>
   <div class="row"><h2>Tus deudas</h2><button class="btn sm" data-action="nuevaDeuda">+ Agregar deuda</button></div>
   ${ds.map(d=>{const pr=d.plan?planResumen(d):null;return `<section class="card stack"><div class="row"><div><h2>${esc(d.nombre)}</h2><div class="muted small">${d.tipo==='tarjeta'?`${((d.tasa||0)*100).toFixed(2)}% mensual · pagas ${fmt(d.pago)} el ${d.dia}`:d.plan?(pr?`Próximo pago ${fmt(pr.prox.monto)} el ${fdate(pr.prox.f)} · faltan ${pr.n} de ${pr.tot} cuotas · sale de ${esc(cuentaN(d.cuenta))}`:'Pagada'):`Cuota ${fmt(d.pago)} el ${d.dia}`}</div></div><div style="text-align:right"><div class="label">Saldo</div><div class="amt" style="font-size:1.25rem;color:var(--debt)">${fmt(d.saldo)}</div></div></div>
     ${d.minimo?`<div class="muted small">Último mínimo del banco: ${fmt(d.minimo)}</div>`:''}${d.nota?`<div class="muted small">${esc(d.nota)}</div>`:''}${d.actualizado?`<div class="muted" style="font-size:.78rem">Saldo revisado el ${fdate(parseISO(d.actualizado))}</div>`:''}
@@ -469,7 +469,7 @@ function renderDeudas(){
       return cs.length?`<div class="small">${cs.length} compras${otros.length?` · ${otros.length} compartidas · este mes te pasan ${fmt(ajeno)}`:''}</div>`:'';})():''}
     <div class="btns">${d.tipo==='tarjeta'?`<button class="btn sm" data-action="tarjeta" data-id="${esc(d.id)}">Compras y quién paga</button>`:''}<button class="btn ${d.tipo==='tarjeta'?'ghost ':''}sm" data-action="abonar" data-id="${esc(d.id)}">Abonar extra</button><button class="btn ghost sm" data-action="saldo" data-id="${esc(d.id)}">Corregir saldo</button><button class="btn ghost sm" data-action="editarDeuda" data-id="${esc(d.id)}">Editar</button></div>
     ${pr&&pr.n>1?`<details><summary class="small">Ver plan de pagos</summary><div class="list">${planDeuda(d).map(x=>`<div class="item"><div class="grow"><div class="t">Cuota ${x.i+1}</div><div class="s">${fdate(x.f)} ${x.f.getFullYear()}</div></div><span class="amt">${fmt(x.monto)}</span></div>`).join('')}</div></details>`:''}</section>`;}).join('')||'<div class="card empty">No tienes deudas registradas. Toca "+ Agregar deuda".</div>'}`;
-  if(!extNode){extNode=document.createElement('div');mountExtracto(extNode,()=>render());}$('#extHost').appendChild(extNode);
+  try{if(!extNode){extNode=document.createElement('div');mountExtracto(extNode,()=>render());}$('#extHost').appendChild(extNode);}catch(e){extNode=null;console.error(e);}
   if($('#chartBox')){let tm=null;const upd=()=>{
       if($('#pPago')){proj.pago=Number($('#pPago').value);$('#pPagoV').textContent=fmt(proj.pago);}
       if($('#pDias')){proj.dias=Number($('#pDias').value);proj.netoDia=num($('#pNeto').value);proj.extra=proj.dias*proj.netoDia;$('#pDiasV').textContent=`${proj.dias} día${proj.dias===1?'':'s'}`;$('#pExtraV').innerHTML=proj.extra?`= <b>${fmt(proj.extra)}</b> extra al mes`:'';}
@@ -723,38 +723,114 @@ async function preguntar(text,shown){
 }
 /* lector de extractos */
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('script'));document.head.appendChild(s);});}
-async function pdfText(file,pw){if(!window.pdfjsLib){await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js');}
-  const doc=await window.pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer()),password:pw||undefined,isEvalSupported:false}).promise;let out='';for(let i=1;i<=Math.min(doc.numPages,8);i++){const tc=await(await doc.getPage(i)).getTextContent();out+=tc.items.map(x=>x.str).join(' ')+'\n';}return out;}
+async function pdfLib(){if(!window.pdfjsLib){await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js');}return window.pdfjsLib;}
+async function pdfText(file,pw){const L=await pdfLib();
+  const doc=await L.getDocument({data:new Uint8Array(await file.arrayBuffer()),password:pw||undefined,isEvalSupported:false}).promise;let out='';for(let i=1;i<=Math.min(doc.numPages,12);i++){const tc=await(await doc.getPage(i)).getTextContent();out+=tc.items.map(x=>x.str).join(' ')+'\n';}return out;}
 const EXT='Lee este documento de tarjeta de crédito o préstamo colombiano. Puede ser (a) un EXTRACTO mensual del banco o (b) CAPTURAS de la app o sucursal virtual con el saldo de hoy y movimientos recientes. Responde SOLO JSON con esta forma: {"tipo":"extracto o app","tarjeta":"Visa","ultimos4":"1234","deudaTotalPesos":2257046,"deudaDolares":0,"pagoMinimo":386745,"pagoTotal":2658783,"fechaCorte":"2026-09-15","fechaLimite":"2026-10-05","diaPago":5,"tasaMensual":0.021593,"cuotaManejo":21630,"interesesCorrientes":53877,"compras":[{"nombre":"AVANCE SUCURSAL VIRTUAL","fecha":"2024-12-31","valorTotal":3000000,"cuotaActual":21,"cuotasTotal":24,"valorCuota":125000,"saldo":375000,"tasaMensual":0.019658}],"movimientos":[{"fecha":"2026-10-02","nombre":"PAGO ALTERNATIVO","valor":-441227}],"resumen":"Una o dos frases en español sencillo."}. En "compras" pon solo compras o avances diferidos con saldo pendiente mayor a 0 (no pagos, ni intereses, ni cuota de manejo). En "movimientos" (sobre todo en capturas de la app) pon los movimientos recientes: pagos y abonos con valor NEGATIVO, compras y cargos con valor positivo. "deudaTotalPesos": en extracto es la deuda a la fecha de corte; en la app es la deuda a la fecha de hoy. Fechas en AAAA-MM-DD. Números sin puntos ni símbolos; null si no aparece. Si hay datos de varias tarjetas, responde un arreglo de objetos.';
+/* ---- lector propio de extractos (sin IA) ---- */
+const MES3={ene:1,feb:2,mar:3,abr:4,may:5,jun:6,jul:7,ago:8,sep:9,set:9,oct:10,nov:11,dic:12};
+const numCO=x=>{if(typeof x==='number')return x;let t=String(x??'').replace(/[^\d,.\-]/g,'');if(!t)return null;const neg=/-/.test(t);t=t.replace(/-/g,'');
+  if(t.includes(',')&&t.includes('.'))t=t.lastIndexOf(',')>t.lastIndexOf('.')?t.replace(/\./g,'').replace(',','.'):t.replace(/,/g,'');
+  else if(t.includes(','))t=/,\d{1,2}$/.test(t)?t.replace(',','.'):t.replace(/,/g,'');
+  else if((t.match(/\./g)||[]).length>1||/\.\d{3}$/.test(t))t=t.replace(/\./g,'');
+  const v=parseFloat(t);return isNaN(v)?null:(neg?-v:v);};
+const isoDMY=s=>{const m=String(s).match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);if(!m)return null;const y=m[3].length===2?2000+Number(m[3]):Number(m[3]);return `${y}-${pad(Number(m[2]))}-${pad(Number(m[1]))}`;};
+function leerSeccionBanco(t){
+  const g=(re)=>{const m=t.match(re);return m?m[1]:null;};
+  const r={pagoTotal:numCO(g(/Pago Total:\s*\$\s*([\d.,]+)/i)),pagoMinimo:numCO(g(/Pago m[ií]nimo:\s*\$\s*([\d.,]+)/i)),deuda:numCO(g(/Deuda a la fecha de corte:\s*\$\s*([\d.,]+)/i))};
+  const lim=t.match(/Pagar antes de:\s*([a-zA-Z]{3})\.?\s*(\d{1,2}),?\s*(\d{4})/i);if(lim&&MES3[lim[1].toLowerCase()])r.fechaLimite=`${lim[3]}-${pad(MES3[lim[1].toLowerCase()])}-${pad(Number(lim[2]))}`;
+  const per=t.match(/Periodo facturado\s+(\d{1,2})\s+([a-zA-Z]{3})\.?\s*-\s*(\d{1,2})\s+([a-zA-Z]{3})\.?\s*(\d{4})/i);if(per&&MES3[per[4].toLowerCase()])r.fechaCorte=`${per[5]}-${pad(MES3[per[4].toLowerCase()])}-${pad(Number(per[3]))}`;
+  const tasa=t.match(/Compra(?:s)?\s+2\s*-\s*36 cuotas\s+([\d.,]+)\s*%/i)||t.match(/Compra Internacional\s+([\d.,]+)\s*%/i);if(tasa)r.tasa=parseFloat(tasa[1].replace(',','.'))/100;
+  const rows=[];const re=/(\d{2}\/\d{2}\/\d{4})\s+\$\s*(-?[\d.]+,\d{1,2})\s+(?:(\d{1,3})\/(\d{1,3})\s+)?\$\s*(-?[\d.]+,\d{1,2})\s+(?:([\d.,]+)\s*%\s+[\d.,]+\s*%\s+)?\$\s*(-?[\d.]+,\d{1,2})/g;
+  let m,prev=0;while((m=re.exec(t))){let d=t.slice(prev,m.index);prev=re.lastIndex;
+    const k=d.lastIndexOf('pendiente');if(k>=0)d=d.slice(k+9);d=d.replace(/VR MONEDA ORIG\s+\S+\s+\S+/gi,' ').replace(/DCF:.*$/s,' ').replace(/\s+[A-Z]{0,2}\d{4,8}\s*$/,'').replace(/\s+/g,' ').trim();
+    rows.push({fecha:isoDMY(m[1]),nombre:d||'Movimiento',valor:numCO(m[2]),cuotaN:m[3]?Number(m[3]):null,cuotasTot:m[4]?Number(m[4]):null,valorCuota:numCO(m[5]),tasa:m[6]?parseFloat(m[6].replace(',','.'))/100:null,saldo:numCO(m[7])});}
+  r.rows=rows;r.manejo=rows.filter(x=>/CUOTA DE MANEJO/i.test(x.nombre)).reduce((a,x)=>a+x.valor,0)||null;r.intereses=rows.filter(x=>/INTERESES CORRIENTES/i.test(x.nombre)).reduce((a,x)=>a+x.valor,0)||null;
+  return r;}
+function lectorPDFBanco(t){
+  if(!/Periodo facturado|Pago m[ií]nimo/i.test(t)||!/\d{2}\/\d{2}\/\d{4}\s+\$/.test(t))return null;
+  const ult=(t.match(/Tarjeta:?\s*\*+(\d{4})/i)||t.match(/\*{2,}(\d{4})/)||[])[1]||'';
+  const iU=t.search(/Moneda:\s*D[OÓ]LARES/i);const pes=leerSeccionBanco(iU>0?t.slice(0,iU):t);const usd=iU>0?leerSeccionBanco(t.slice(iU)):null;
+  if(!pes.rows.length&&!pes.pagoTotal)return null;
+  const banco=/bancolombia/i.test(t)?'Bancolombia':/davivienda/i.test(t)?'Davivienda':/bbva/i.test(t)?'BBVA':/banco de bogot/i.test(t)?'Banco de Bogotá':'';
+  const compras=pes.rows.filter(x=>x.saldo>0&&x.cuotasTot).map(x=>({nombre:x.nombre,fecha:x.fecha,valorTotal:x.valor,cuotaActual:x.cuotaN,cuotasTotal:x.cuotasTot,valorCuota:x.valorCuota,saldo:x.saldo,tasaMensual:x.tasa||pes.tasa||null}));
+  const pagos=pes.rows.filter(x=>x.valor<0).reduce((a,x)=>a+x.valor,0);
+  const usdSaldo=usd?(usd.deuda??usd.pagoTotal??0):0;
+  return{tipo:'extracto',fuente:'lector',tarjeta:banco?`Tarjeta ${banco}`:'Tarjeta',ultimos4:ult,deudaTotalPesos:pes.deuda??pes.pagoTotal,deudaDolares:usdSaldo||0,pagoMinimo:pes.pagoMinimo,pagoMinimoUSD:usd?.pagoMinimo||null,pagoTotal:pes.pagoTotal,
+    fechaCorte:pes.fechaCorte||null,fechaLimite:pes.fechaLimite||null,diaPago:pes.fechaLimite?Number(pes.fechaLimite.slice(8)):null,tasaMensual:pes.tasa||null,cuotaManejo:pes.manejo,interesesCorrientes:pes.intereses,compras,movimientos:[],
+    resumen:`${compras.length} compra${compras.length===1?'':'s'} a cuotas con saldo pendiente${pes.intereses?`, intereses del mes ${fmt(pes.intereses)}`:''}${pes.manejo?`, cuota de manejo ${fmt(pes.manejo)}`:''}${pagos?`, pagos del periodo ${fmt(-pagos)}`:''}${usdSaldo?`. Además debes USD ${usdSaldo}${usd.pagoMinimo?` (mínimo USD ${usd.pagoMinimo})`:''}`:''}.`};}
+async function xlsLib(){if(!window.XLSX)await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');return window.XLSX;}
+async function hojaFilas(file){const X=await xlsLib();const esCSV=/\.csv$/i.test(file.name||'')||/csv/.test(file.type||'');const wb=esCSV?X.read(await file.text(),{type:'string',raw:true}):X.read(new Uint8Array(await file.arrayBuffer()),{type:'array'});
+  return wb.SheetNames.map(n=>({nombre:n,filas:X.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:''}).filter(r=>r.some(c=>String(c).trim()!==''))}));}
+const fechaCelda=v=>{if(v instanceof Date&&!isNaN(v))return iso(new Date(v.getFullYear(),v.getMonth(),v.getDate()));if(typeof v==='number'&&v>30000&&v<60000){const d=new Date(Math.round(Math.round(v)-25569)*864e5);return iso(new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()));}
+  const s=String(v);const a=isoDMY(s);if(a)return a;const b=s.match(/(\d{4})-(\d{2})-(\d{2})/);if(b)return b[0];const c=s.match(/(\d{1,2})\s+(?:de\s+)?([a-zA-ZáéíóúÁÉÍÓÚ]{3,10})\.?\s+(?:de\s+)?(\d{4})/);const mk=c&&c[2].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').slice(0,3);if(c&&MES3[mk])return `${c[3]}-${pad(MES3[mk])}-${pad(Number(c[1]))}`;return null;};
+function lectorHoja(hojas){
+  for(const h of hojas){const F=h.filas;let hi=-1,cols=null;
+    for(let i=0;i<Math.min(F.length,40);i++){const r=F[i].map(c=>String(c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim());
+      const f=r.findIndex(c=>/^fecha( de (la )?(transaccion|compra|movimiento))?$|^fecha$/.test(c)||c==='fecha');const v=r.findIndex(c=>/^(valor|monto|importe)( (del )?movimiento| transaccion| original| compra)?$|^valor$/.test(c)||/^(valor|monto)/.test(c)&&!/cuota/.test(c));
+      if(f>=0&&v>=0){hi=i;cols={f,v,d:r.findIndex(c=>/descrip|movimiento|concepto|detalle|establecimiento|comercio/.test(c)&&!/valor|fecha/.test(c)),
+        cu:r.findIndex(c=>/^(numero (de )?)?cuotas?$|^cuotas|no\.? cuotas|plazo/.test(c)),vc:r.findIndex(c=>/valor.*cuota|cuota.*valor|couta/.test(c)),sa:r.findIndex(c=>/saldo/.test(c)),es:r.findIndex(c=>/estado/.test(c)),ti:r.findIndex(c=>/interes|tasa/.test(c))};break;}}
+    if(hi<0)continue;
+    const plano=F.slice(0,hi).flat().join(' ');const ult=(plano.match(/\*+(\d{4})/)||F.flat().join(' ').match(/\*{2,}(\d{4})/)||[])[1]||'';
+    const lab=re=>{for(const r of F.slice(0,hi))for(let j=0;j<r.length;j++)if(re.test(String(r[j]))){const n=r.slice(j+1).map(numCO).find(x=>x!=null&&x!==0)??numCO(String(r[j]).split(':').pop());if(n!=null)return n;}return null;};
+    const rows=[];let usd=0;
+    for(const r of F.slice(hi+1)){const fe=fechaCelda(r[cols.f]);const vRaw=r[cols.v];const v=numCO(vRaw);if(!fe||v==null)continue;const esUSD=/usd|us\$|dolar/i.test(String(vRaw));
+      const cuRaw=cols.cu>=0?String(r[cols.cu]):'';const cm=cuRaw.match(/(\d+)\s*\/\s*(\d+)/);const cuN=cm?Number(cm[1]):null,cuT=cm?Number(cm[2]):(cuRaw&&/^\d+$/.test(cuRaw.trim())?Number(cuRaw):null);
+      rows.push({fecha:fe,nombre:String(cols.d>=0?r[cols.d]:'Movimiento').trim()||'Movimiento',valor:v,usd:esUSD,cuotaN:cuN,cuotasTot:cuT,valorCuota:cols.vc>=0?numCO(r[cols.vc]):null,saldo:cols.sa>=0?numCO(r[cols.sa]):null,tasa:cols.ti>=0?(numCO(r[cols.ti])||0)/100||null:null});}
+    if(!rows.length)continue;
+    const conSaldo=rows.some(x=>x.saldo>0);const pes=rows.filter(x=>!x.usd);usd=rows.filter(x=>x.usd).reduce((a,x)=>a+x.valor,0);
+    const compras=conSaldo?pes.filter(x=>x.saldo>0).map(x=>({nombre:x.nombre,fecha:x.fecha,valorTotal:x.valor,cuotaActual:x.cuotaN,cuotasTotal:x.cuotasTot,valorCuota:x.valorCuota,saldo:x.saldo,tasaMensual:x.tasa})):[];
+    const saldoTot=lab(/deuda|saldo total|pago total|saldo a la fecha/i);
+    return{tipo:conSaldo?'extracto':'app',fuente:'lector',tarjeta:'Tarjeta',ultimos4:ult,deudaTotalPesos:saldoTot??(conSaldo?compras.reduce((a,x)=>a+x.saldo,0):null),deudaDolares:0,pagoMinimo:lab(/pago m[ií]nimo/i),pagoTotal:lab(/pago total/i),
+      fechaCorte:null,fechaLimite:null,tasaMensual:null,compras,movimientos:conSaldo?[]:pes.map(x=>({fecha:x.fecha,nombre:x.nombre,valor:x.valor})),
+      resumen:conSaldo?`${compras.length} compras a cuotas con saldo pendiente.`:`${pes.length} movimiento${pes.length===1?'':'s'} leídos${usd?` (además ${rows.filter(x=>x.usd).length} en dólares por USD ${Math.round(usd*100)/100})`:''}.`};}
+  return null;}
+const tipoArchivo=f=>{const n=(f.name||'').toLowerCase(),t=f.type||'';if(t==='application/pdf'||n.endsWith('.pdf'))return 'pdf';if(/\.(xlsx|xls|xlsm|ods|csv)$/.test(n)||/spreadsheet|excel|csv/.test(t))return 'hoja';if(t.startsWith('image/')||/\.(jpe?g|png|webp|heic)$/.test(n))return 'img';return null;};
 function mountExtracto(host,onSaved,defId){
   if(!host)return;
-  if(!aiReady){host.innerHTML='<div class="muted small">Preparando…</div>';return;}
-  if(!sampleFn){host.innerHTML='<div class="muted small">La lectura de extractos no está disponible en este momento. Revisa tu conexión.</div>';return;}
-  const p='x'+uid();
-  host.innerHTML=`<label class="f">Archivo<input id="${p}f" type="file" accept="application/pdf${imgOK?',image/*':''}" multiple></label>
+  const q=sel=>host.querySelector(sel);
+  const p='x'+uid();const ia=!!sampleFn;
+  host.innerHTML=`<label class="f">Extracto o movimientos de tu tarjeta<input id="${p}f" type="file" accept=".pdf,application/pdf,.xlsx,.xls,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv${ia&&imgOK?',image/*':''}" multiple></label>
+    <div class="muted" style="font-size:.78rem;margin-top:4px">PDF del extracto o Excel/CSV que descargas del banco${ia&&imgOK?', o capturas de la app':''}. Los extractos de Bancolombia se leen directo en tu celular, sin IA.</div>
     <div id="${p}pw" hidden class="stack" style="gap:8px;margin-top:8px"><label class="f">Este PDF tiene clave (en muchos bancos es tu cédula)<input id="${p}p" type="password" autocomplete="off"></label><button class="btn sm" id="${p}r">Abrir con la clave</button></div><div id="${p}o" class="stack" style="margin-top:10px"></div>`;
   let files=null;
-  const run=async pw=>{const out=$('#'+p+'o');files=pw!=null&&files?files:[...($('#'+p+'f').files||[])];if(!files.length)return;out.innerHTML='<div class="muted">Leyendo…</div>';$('#'+p+'pw').hidden=true;
-    try{const res=[];for(const f of files.filter(f=>f.type==='application/pdf')){let t;try{t=await pdfText(f,pw);}catch(e){if(e&&e.name==='PasswordException'){$('#'+p+'pw').hidden=false;out.innerHTML='<div class="note">El PDF tiene clave.</div>';return;}throw e;}
-        if(!t.trim()){out.innerHTML='<div class="note">Ese PDF no tiene texto legible. Sube capturas.</div>';return;}res.push(...[].concat(await sampleFn.json(EXT+'\n\nTEXTO:\n'+t.slice(0,60000))));}
-      const imgs=files.filter(f=>f.type.startsWith('image/'));if(imgs.length)res.push(...[].concat(await sampleFn.json(EXT+'\n\nLos datos vienen en las imágenes adjuntas.',{images:imgs})));
-      out.innerHTML=res.map((r,i)=>extCard(r,p+i,defId)).join('');
-      res.forEach((r,i)=>{const id=p+i;const btn=$('#'+id+'b');if(!btn)return;btn.onclick=()=>{const sel=$('#'+id+'d').value,usar=$('#'+id+'u')?.checked!==false,val=usar?num($('#'+id+'v').value):0;
+  const run=async pw=>{const out=q('#'+p+'o');files=pw!=null&&files?files:[...(q('#'+p+'f').files||[])];if(!files.length)return;q('#'+p+'pw').hidden=true;
+    const estado=t=>{out.innerHTML=`<div class="muted">${esc(t)}</div>`;};
+    try{const res=[],avisos=[];const imgs=[];
+      for(const f of files){const tp=tipoArchivo(f);
+        if(!tp){avisos.push(`"${f.name}" no es un formato que pueda leer. Usa PDF, Excel, CSV${ia&&imgOK?' o una foto':''}.`);continue;}
+        if(tp==='img'){if(ia&&imgOK)imgs.push(f);else avisos.push(`Las fotos necesitan el asistente con IA, que no está disponible ahora. Sube el PDF o el Excel.`);continue;}
+        if(tp==='pdf'){estado(`Leyendo ${f.name}…`);let t;try{t=await pdfText(f,pw);}catch(e){if(e&&e.name==='PasswordException'){q('#'+p+'pw').hidden=false;out.innerHTML=`<div class="note">"${esc(f.name)}" tiene clave. Escríbela abajo.</div>`;return;}if(e&&/script/.test(e.message||''))throw{msg:'No se pudo cargar el lector de PDF. Revisa tu conexión a internet.'};throw{msg:`No pude abrir "${f.name}". ¿Es un PDF válido?`};}
+          if(!t.trim()){avisos.push(`"${f.name}" es una imagen escaneada sin texto. ${ia&&imgOK?'Sube una captura o foto.':'Descarga el extracto digital del banco.'}`);continue;}
+          const r=lectorPDFBanco(t);if(r){res.push(r);continue;}
+          if(ia){estado(`Analizando ${f.name} con IA…`);res.push(...[].concat(await sampleFn.json(EXT+'\n\nTEXTO:\n'+t.slice(0,60000))).map(x=>({...x,fuente:'ia'})));}
+          else avisos.push(`No reconocí el formato de "${f.name}" y el asistente con IA no está disponible ahora.`);continue;}
+        if(tp==='hoja'){estado(`Leyendo ${f.name}…`);let hs;try{hs=await hojaFilas(f);}catch(e){if(e&&/script/.test(e.message||''))throw{msg:'No se pudo cargar el lector de Excel. Revisa tu conexión a internet.'};throw{msg:`No pude abrir "${f.name}". ¿Está protegido con clave? Ábrelo y guárdalo sin clave.`};}
+          const r=lectorHoja(hs);if(r){res.push(r);continue;}
+          if(ia){estado(`Analizando ${f.name} con IA…`);const txt=hs.map(h=>`# Hoja ${h.nombre}\n`+h.filas.slice(0,400).map(r=>r.map(c=>c instanceof Date?iso(c):String(c)).join(' | ')).join('\n')).join('\n\n');res.push(...[].concat(await sampleFn.json(EXT+'\n\nTABLA (Excel del banco):\n'+txt.slice(0,60000))).map(x=>({...x,fuente:'ia'})));}
+          else avisos.push(`No encontré columnas de fecha y valor en "${f.name}".`);}}
+      if(imgs.length){estado('Analizando las imágenes con IA…');res.push(...[].concat(await sampleFn.json(EXT+'\n\nLos datos vienen en las imágenes adjuntas.',{images:imgs})).map(x=>({...x,fuente:'ia'})));}
+      out.innerHTML=avisos.map(a=>`<div class="note">${esc(a)}</div>`).join('')+res.map((r,i)=>extCard(r,p+i,defId)).join('')||'<div class="note">No encontré datos en ese archivo.</div>';
+      res.forEach((r,i)=>{const id=p+i;const btn=q('#'+id+'b');if(!btn)return;btn.onclick=()=>{const sel=q('#'+id+'d').value,usar=q('#'+id+'u')?.checked!==false;let val=usar?num(q('#'+id+'v').value):0;
+        const trm=num(q('#'+id+'t')?.value);if(usar&&trm&&r.deudaDolares){val+=Math.round(r.deudaDolares*trm);ls.set('cc-trm',String(trm));}
         guardarLectura(r,sel,val);btn.disabled=true;btn.textContent='Guardado';toast(r.tipo==='app'?'Saldo y movimientos actualizados':'Extracto cargado');onSaved&&onSaved();};});
-    }catch(e){const m=e?.code?aiErr(e):'No pude leer ese archivo. Prueba con capturas.';out.innerHTML=m?`<div class="note">${esc(m)}</div>`:'';}};
-  $('#'+p+'f').onchange=()=>run();$('#'+p+'r').onclick=()=>run($('#'+p+'p').value);
+    }catch(e){const m=e?.msg||(e?.code?aiErr(e):'No pude leer ese archivo. Prueba con el PDF o el Excel que descargas del banco.');out.innerHTML=m?`<div class="note">${esc(m)}</div>`:'';}
+    finally{q('#'+p+'f').value='';}};
+  q('#'+p+'f').onchange=()=>{files=null;run();};q('#'+p+'r').onclick=()=>run(q('#'+p+'p').value);
 }
 function extCard(r,id,defId){if(!r||typeof r!=='object')return '';
   const match=deudas().find(d=>r.ultimos4&&String(d.ultimos4||'')===String(r.ultimos4))||(defId&&deuda(defId));const cs=Array.isArray(r.compras)?r.compras:[];const mv=Array.isArray(r.movimientos)?r.movimientos:[];const app=r.tipo==='app';
   return `<div class="ed"><div class="row"><h3>${app?'📱 Captura de la app':'📄 Extracto'} · ${esc(r.tarjeta||'Tarjeta')} ${r.ultimos4?'*'+esc(r.ultimos4):''}</h3>${r.fechaLimite?`<span class="pill warn">Paga antes del ${esc(r.fechaLimite)}</span>`:''}</div>
   ${mv.length?`<div class="small"><b>Movimientos:</b> ${mv.slice(0,8).map(m=>`${esc(m.nombre)} ${m.valor<0?'−':'+'}${fmt(Math.abs(m.valor||0))}`).join(' · ')}</div>`:''}
-  <div class="tiles"><div class="tile"><div class="label">Deuda</div><div class="v">${fmt(r.deudaTotalPesos)}</div>${r.deudaDolares?`<div class="muted" style="font-size:.78rem">+ USD ${esc(r.deudaDolares)}</div>`:''}</div><div class="tile"><div class="label">Mínimo</div><div class="v">${fmt(r.pagoMinimo)}</div></div></div>
+  <div class="muted" style="font-size:.78rem">${r.fuente==='lector'?'✓ Leído directo del archivo, sin IA.':'Leído con IA: revisa que los valores coincidan con tu extracto.'}${r.fechaCorte?` Corte: ${fdate(parseISO(r.fechaCorte))}.`:''}</div>
+  <div class="tiles"><div class="tile"><div class="label">${app?'Deuda hoy':'Deuda al corte'}</div><div class="v">${r.deudaTotalPesos!=null?fmt(r.deudaTotalPesos):'—'}</div>${r.deudaTotalPesos==null?'<div class="muted" style="font-size:.78rem">No viene en el archivo</div>':''}${r.deudaDolares?`<div class="muted" style="font-size:.78rem">+ USD ${esc(r.deudaDolares)}</div>`:''}</div><div class="tile"><div class="label">Pago mínimo</div><div class="v">${r.pagoMinimo!=null?fmt(r.pagoMinimo):'—'}</div>${r.pagoMinimoUSD?`<div class="muted" style="font-size:.78rem">+ USD ${esc(r.pagoMinimoUSD)}</div>`:''}</div></div>
   ${r.resumen?`<p>${esc(r.resumen)}</p>`:''}
   ${cs.length?`<div class="tablewrap"><table><thead><tr><th>Compra</th><th>Cuota</th><th class="n">Valor cuota</th><th class="n">Saldo</th></tr></thead><tbody>${cs.map(c=>`<tr><td>${esc(c.nombre)}</td><td>${c.cuotaActual!=null?esc(c.cuotaActual+'/'+(c.cuotasTotal??'?')):''}</td><td class="n">${fmt(c.valorCuota)}</td><td class="n">${fmt(c.saldo)}</td></tr>`).join('')}</tbody></table></div>`:''}
   <div class="grid2"><label class="f">Guardar en<select id="${id}d">${deudas().map(d=>`<option value="${esc(d.id)}" ${match&&match.id===d.id?'selected':''}>${esc(d.nombre)}</option>`).join('')}<option value="nueva" ${match?'':'selected'}>Agregar como nueva tarjeta</option></select></label>
-  <label class="f">${app?'Saldo de hoy':'Saldo en pesos'}<input id="${id}v" inputmode="numeric" value="${fmt(r.deudaTotalPesos)}"></label></div>
-  <label class="row small" style="justify-content:flex-start;gap:8px"><input type="checkbox" id="${id}u" style="width:auto" ${app?'checked':''}> Usar este valor como saldo actual de la deuda</label>
-  <div class="muted" style="font-size:.8rem">${app?'':'El extracto es la foto al día de corte; las compras se cargan y conservan a quién pertenece cada una. Para el saldo de hoy sube también una captura de la app. '}Si hay saldo en dólares, súmalo en pesos.</div><button class="btn sm" id="${id}b">Guardar</button></div>`;}
+  <label class="f">${app?'Saldo de hoy':'Saldo en pesos'}<input id="${id}v" inputmode="numeric" value="${r.deudaTotalPesos!=null?fmt(r.deudaTotalPesos):''}" placeholder="Escríbelo si lo sabes"></label>
+  ${r.deudaDolares?`<label class="f">Valor del dólar hoy (para sumar los USD ${esc(r.deudaDolares)})<input id="${id}t" inputmode="numeric" value="${esc(ls.get('cc-trm')?fmt(Number(ls.get('cc-trm'))):'')}" placeholder="Ej: $4.000"></label>`:''}</div>
+  <label class="row small" style="justify-content:flex-start;gap:8px"><input type="checkbox" id="${id}u" style="width:auto" ${app&&r.deudaTotalPesos!=null?'checked':''}> Usar este valor como saldo actual de la deuda</label>
+  <div class="muted" style="font-size:.8rem">${app?'':'El extracto es la foto al día de corte; las compras se cargan y conservan a quién pertenece cada una. Para el saldo de hoy sube también el Excel de movimientos o una captura de la app. '}</div><button class="btn sm" id="${id}b">Guardar</button></div>`;}
 
 /* ================= hojas ================= */
 function openSheet(html,mount){$('#sheetHost').innerHTML=`<div class="overlay" id="ov"><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div></div>`;$('#ov').addEventListener('click',e=>{if(e.target.id==='ov')closeSheet();});const sh=$('.sheet');moneyInputs(sh);mount&&mount(sh);}
