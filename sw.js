@@ -1,5 +1,5 @@
 /* Cuentas Claras — guarda la app para abrirla rápido y sin señal. Siempre intenta traer la versión nueva primero. */
-const V = 'cc-v8';
+const V = 'cc-v9';
 const SHELL = ['./', './index.html', './app.js', './plataforma.js', './manifest.json', './icon-192.png', './icon-512.png', './privacidad.html'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).catch(() => {})); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k))))); self.clients.claim(); });
