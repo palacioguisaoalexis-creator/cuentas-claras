@@ -37,7 +37,7 @@ const DB = {
 const USER = { id: async () => auth.currentUser?.uid || null, isOwner: async () => true, canEdit: async () => true, can: async () => true };
 
 /* ---------- IA con Gemini (Firebase AI Logic, plan gratuito) ---------- */
-const MODELOS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+const MODELOS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 function limpiar(t) {
   let s = String(t);
   const u = auth.currentUser;
@@ -70,7 +70,9 @@ async function contenidos(input, imagenes) {
   return out;
 }
 function tipoError(e) {
-  const m = String(e?.message || e);
+  const m = String(e?.message || e) + ' ' + String(e?.code || '') + ' ' + JSON.stringify(e?.customErrorData || {});
+  if (/app.?check|attestation|401|UNAUTHENTICATED/i.test(m)) return 'appcheck';
+  if (/SERVICE_DISABLED|API has not been used|firebasevertexai|generativelanguage|ai logic/i.test(m)) return 'sampling_disabled';
   if (/429|RESOURCE_EXHAUSTED|quota|rate/i.test(m)) return 'rate_limited';
   if (/404|NOT_FOUND|not found|is not supported|unsupported model/i.test(m)) return 'modelo';
   if (/403|PERMISSION_DENIED|has not been used|disabled|API key/i.test(m)) return 'sampling_disabled';
@@ -101,7 +103,8 @@ async function SAMPLE(input, opts = {}) {
       if (e && e.code && !String(e.code).includes('/')) throw e;
       const t = tipoError(e); ultimo = e;
       if (t === 'modelo') continue;
-      throw { code: t, message: String(e?.message || e), text: text || undefined };
+      console.error('Gemini', nombre, e);
+      throw { code: t, message: String(e?.message || e).slice(0, 300), text: text || undefined };
     }
   }
   throw { code: 'upstream_error', message: String(ultimo?.message || 'Sin modelo disponible') };
