@@ -221,25 +221,39 @@ function resumen(k){
   return r;
 }
 function tasaProm(items){const t=items.reduce((a,d)=>a+Math.max(0,d.saldo),0);return t>0?items.reduce((a,d)=>a+Math.max(0,d.saldo)*(d.tasa||0),0)/t:0;}
+/* Proyección de TODAS las deudas (tarjetas y préstamos).
+   P: pago mensual propio a tarjetas (null = lo planeado). extra: plata extra al mes (moto u otros), va primero a la deuda de mayor interés. */
+let _ptCache=null;
 function proyectar(P,extra){
-  const cards=deudas().filter(d=>d.tipo==='tarjeta');let B=cards.reduce((a,d)=>a+Math.max(0,d.saldo),0);
-  const r=tasaProm(cards),k0=curKey(),base=cards.reduce((a,d)=>a+(d.pago||0),0);const pts=[{k:k0,B}];let int=0;
-  if(B<=0)return{pts,fin:k0,intereses:0,ok:true};
-  for(let i=0;i<240;i++){
-    const k=addCycle(k0,i),dias=cDays(k),f=dias/30;const obs=obligaciones(k).filter(o=>o.deudaId&&esTarjeta(o.deudaId));
+  const ds=deudas().filter(d=>d.saldo>0);const st={};ds.forEach(d=>st[d.id]=d.saldo);
+  const tot=()=>Object.values(st).reduce((a,v)=>a+Math.max(0,v),0);
+  const cards=ds.filter(d=>d.tipo==='tarjeta'),base=cards.reduce((a,d)=>a+(d.pago||0),0);
+  const orden=[...ds].sort((a,b)=>(b.tasa||0)-(a.tasa||0)||(a.tipo==='tarjeta'?-1:1)||a.saldo-b.saldo);
+  const k0=curKey();let B=tot();const pts=[{k:k0,B}];let int=0;const finD={};
+  const lastPlan={};ds.forEach(d=>{if(d.plan){const fs=fechasPlan(d);lastPlan[d.id]=fs[fs.length-1];}});
+  if(B<=0)return{pts,fin:k0,intereses:0,ok:true,finD};
+  _ptCache=new Map();
+  try{for(let i=0;i<240;i++){
+    const k=addCycle(k0,i),f=cDays(k)/30;
+    const obs=obligaciones(k).filter(o=>o.deudaId&&st[o.deudaId]!=null);
     const ov=S.cycles[k]&&obs.some(o=>S.cycles[k].montos[o.id]!=null);
-    let pay;
-    if(i===0)pay=obs.filter(o=>!o.estado).reduce((a,o)=>a+o.monto,0);
-    else if(ov||P==null)pay=obs.reduce((a,o)=>a+o.monto,0);
-    else pay=obs.reduce((a,o)=>a+o.fam+(o.extra?o.monto:(base?o.propio*P/base:0)),0)+(base?0:P*f);
-    if(i>0)pay+=(extra||0)*f;
-    const it=B*r*f;int+=it;B=B+it+(i>0?(cfg().cargosTarjeta||0)*f:0)-pay;
-    if(B<=0){pts.push({k:addCycle(k0,i+1),B:0});return{pts,fin:k,intereses:int,ok:true};}
-    pts.push({k:addCycle(k0,i+1),B});
-    if(i>6&&B>=pts[pts.length-4].B)return{pts,fin:null,intereses:int,ok:false};
-  }
-  return{pts,fin:null,intereses:int,ok:false};
+    for(const d of ds){if(st[d.id]>0.5){const it=st[d.id]*(d.tasa||0)*f;st[d.id]+=it;int+=it;}}
+    if(i>0&&cfg().cargosTarjeta){const c0=cards.find(d=>st[d.id]>0.5);if(c0)st[c0.id]+=cfg().cargosTarjeta*f;}
+    let pool=0;
+    for(const o of obs){if(i===0&&o.estado)continue;const d=deuda(o.deudaId);if(!d)continue;
+      let m=(d.tipo==='tarjeta'&&i>0&&!ov&&P!=null)?o.fam+(o.extra?o.monto:(base?o.propio*P/base:0)):o.monto;
+      const pay=Math.min(m,Math.max(0,st[d.id]));st[d.id]-=pay;if(d.tipo==='tarjeta')pool+=m-pay;}
+    for(const d of ds){if(!d.plan||st[d.id]<=0.5)continue;const ult=lastPlan[d.id];if(ult&&ult<=cEnd(k)){st[d.id]=0;}}
+    if(i>0){if(!base&&P&&cards.length)pool+=P*f;pool+=(extra||0)*f;}
+    for(const d of orden){if(pool<=0)break;if(st[d.id]>0.5){const p=Math.min(pool,st[d.id]);st[d.id]-=p;pool-=p;}}
+    for(const d of ds)if(st[d.id]<=0.5&&!finD[d.id])finD[d.id]=k;
+    B=tot();pts.push({k:addCycle(k0,i+1),B:Math.max(0,B)});
+    if(B<=1)return{pts,fin:k,intereses:int,ok:true,finD};
+    if(i>6&&B>=pts[pts.length-5].B)return{pts,fin:null,intereses:int,ok:false,finD};
+  }}finally{_ptCache=null;}
+  return{pts,fin:null,intereses:int,ok:false,finD};
 }
+function extraMoto(){const fs=cfg().fuentes||[];const f=fuentePrincipal()||fs[0];if(!f)return null;const p=promExtra(f.id);return{f,prom:p?.prom||0,n:p?.n||0};}
 function finLabel(p){return p.fin?mlabel(cEnd(p.fin)):'—';}
 function prestamosFin(){return deudas().filter(d=>d.tipo==='prestamo'&&d.saldo>0&&(d.pago>0||d.plan)).map(d=>{if(d.plan){const pl=planDeuda(d);return pl.length?{d,n:pl.length,fecha:pl[pl.length-1].f}:null;}let n=Math.ceil(d.saldo/d.pago);let k=curKey();if(C(k).pagados[d.id]||!dueIn(k,d.dia)||dueIn(k,d.dia)<today())k=addCycle(k,1);let cnt=0,kk=k;for(let i=0;i<60&&cnt<n;i++){kk=addCycle(k,i);if(dueIn(kk,d.dia))cnt++;}return{d,n,fecha:dueIn(kk,d.dia)};}).filter(Boolean);}
 function promExtra(fid){const all=Object.values(S.cycles).flatMap(c=>c.movs).filter(v=>v.t==='extra'&&(!fid||v.fuente===fid));if(!all.length)return null;return{prom:all.reduce((a,v)=>a+v.monto,0)/all.length,n:all.length};}
@@ -265,10 +279,10 @@ function consejos(){
   if(md0&&md0.falta>0)out.push({tono:md0.prom&&md0.prom<md0.meta?'warn':'ok',t:`Meta por día de trabajo: ${fmt(md0.meta)}`,x:`Te quedan unos ${md0.restantes} días de trabajo hasta el ${fdate(cEnd(k))} para cubrir ${fmt(md0.falta)} entre pagos y gastos del día a día.${md0.prom?` Tu promedio neto es ${fmt(md0.prom)} por día${md0.prom<md0.meta?`: te faltan ${fmt(md0.meta-md0.prom)} diarios, o ${Math.ceil(md0.falta/md0.prom)-md0.restantes} día${Math.ceil(md0.falta/md0.prom)-md0.restantes>1?'s':''} más de trabajo`:', vas bien'}.`:''}`});
   else if(r.libre<0){let x=`Te faltan ${fmt(-r.libre)} para cubrir los pagos de este ciclo.`;for(const f of c.fuentes||[]){const p=promExtra(f.id);if(p&&p.prom>0){const n=Math.ceil(-r.libre/p.prom);x+=` Con ${f.nombre.toLowerCase()} (${fmt(p.prom)} neto en promedio) son unas ${n} jornada${n>1?'s':''}.`;break;}}out.push({tono:'bad',t:'Este ciclo no cierra todavía',x});}
   const base=proyectar(null,0);
-  if(base.ok&&deudas().some(d=>d.tipo==='tarjeta'&&d.saldo>0)){
+  if(base.ok&&deudas().some(d=>d.saldo>0)){
     for(const f of c.fuentes||[]){const p=promExtra(f.id);
       if(p&&p.prom>0){const lines=[2,4].map(n=>{const pr=proyectar(null,p.prom*n);const ah=pr.fin&&base.fin?Math.round((cStart(base.fin)-cStart(pr.fin))/DAY/30):0;return pr.ok?`<li><b>${n} jornadas más al mes</b> (≈${fmt(p.prom*n)}): libre en ${finLabel(pr)}${ah>0?`, ${ah} mes${ah>1?'es':''} antes`:''}, y ahorras ${fmt(base.intereses-pr.intereses)} en intereses.</li>`:'';}).join('');
-        out.push({tono:'ok',t:`Acelera con ${f.nombre.toLowerCase()}`,x:`Hoy quedas libre de tarjetas en ${finLabel(base)}. Si lo neto de ${f.nombre.toLowerCase()} va directo a la deuda:<ul>${lines}</ul>`,html:true});}
+        out.push({tono:'ok',t:`Acelera con ${f.nombre.toLowerCase()}`,x:`Hoy quedas libre de deudas en ${finLabel(base)}. Si lo neto de ${f.nombre.toLowerCase()} va directo a la deuda:<ul>${lines}</ul>`,html:true});}
       else out.push({tono:'ok',t:`Registra tus jornadas de ${f.nombre.toLowerCase()}`,x:'Con dos o tres registros te calculo cuántos meses adelantas si metes esa plata a la deuda.'});}
   }
   const pres=c.presupuestos||{};const tr=Math.max(1,Math.round((today()-cStart(k))/DAY)+1),dias=cDays(k);
@@ -290,6 +304,7 @@ function tipHTML(t){return `<div class="tip ${t.tono==='ok'?'':t.tono}"><h3>${es
 
 /* ================= render ================= */
 function render(){
+  if(tab==='deudas'&&document.activeElement&&document.activeElement.type==='range'&&$('#view-deudas').contains(document.activeElement))return;
   if(!loaded)return;
   const setup=!S.config||!S.config.onboarded;
   $('#view-setup').hidden=!setup;$('#tabs').hidden=setup;$('#fab').hidden=setup;
@@ -318,7 +333,7 @@ function renderHoy(){
   <section class="light ${ph.estado}" aria-live="polite"><div class="lbl"><span class="lamp"></span>Hoy puedes gastar</div><div class="big">${fmt(Math.max(0,ph.restante))}</div><div class="sm">${esc(phMsg)}</div>
     <div class="btns" style="margin-top:6px"><button class="btn sm" style="background:rgba(255,255,255,.95);color:#14201A" data-action="nuevo">Registrar gasto</button>${conDias()&&fuentePrincipal()?`<button class="btn sm" style="background:rgba(255,255,255,.2);color:#fff" data-action="midia">Registrar mi día</button>`:''}</div></section>
   ${rch||ap||tot>0?`<div class="badges">${rch?`<div class="badge">🔥 <span><b>${rch}</b> día${rch>1?'s':''} seguidos registrando</span></div>`:''}${ap?`<div class="badge">💪 <span>Le metiste <b>${fmt(ap)}</b> a deudas este ciclo</span></div>`:''}${tot>0&&ini>0?`<div class="badge">📉 <span><b>${pct.toFixed(0)}%</b> de tu deuda pagada</span></div>`:''}</div>`:''}
-  ${tot>0?`<section class="hero"><div class="label">Libre de tarjetas en</div><div class="big">${p.ok?finLabel(p):'Revisa el plan'}</div>
+  ${tot>0?`<section class="hero"><div class="label">Libre de deudas en</div><div class="big">${p.ok?finLabel(p):'Revisa el plan'}</div>
     <div class="sub">${p.ok?`Con lo que planeas pagar. Intereses que faltan: ${fmt(p.intereses)}.`:'Con lo que pagas hoy, los intereses le ganan al abono.'}</div>
     <div class="bar"><i style="width:${pct.toFixed(1)}%"></i></div><div class="row" style="margin-top:8px;font-size:.85rem"><span>Debes ${fmt(tot)}</span><span>${pct.toFixed(0)}% pagado</span></div>
     ${pf.map(x=>`<div class="sub" style="margin-top:6px">${esc(x.d.nombre)}: ${x.n} cuota${x.n>1?'s':''}, termina en ${mlabel(x.fecha)}.</div>`).join('')}</section>`:''}
@@ -432,16 +447,20 @@ async function descargarExcel(k,btn){btn.disabled=true;btn.textContent='Preparan
   catch(e){toast(e?.code==='declined'?'Descarga cancelada':'No se pudo generar el Excel');}
   finally{btn.disabled=false;btn.textContent='Descargar Excel';}}
 function renderDeudas(){
-  const ds=deudas(),base=ds.filter(d=>d.tipo==='tarjeta').reduce((a,d)=>a+(d.pago||0),0);if(proj.pago==null)proj.pago=base||300000;
-  const a=proyectar(proj.pago,0),b=proyectar(proj.pago,proj.extra);const pe=promExtra();
+  const ds=deudas(),hayT=ds.some(d=>d.tipo==='tarjeta'&&d.saldo>0),base=ds.filter(d=>d.tipo==='tarjeta').reduce((a,d)=>a+(d.pago||0),0);if(proj.pago==null)proj.pago=base||300000;
+  const em=extraMoto();if(em){if(proj.netoDia==null)proj.netoDia=Math.round((em.prom||0)/1000)*1000;if(proj.dias==null)proj.dias=0;proj.extra=proj.dias*(proj.netoDia||0);}
+  const P=hayT?proj.pago:null;const a=proyectar(P,0),b=proyectar(P,proj.extra);
   $('#view-deudas').innerHTML=`
+  ${ds.some(d=>d.saldo>0)?`<section class="card stack"><div class="row"><h2>¿Cuándo quedas libre de deudas?</h2><span class="pill ${b.ok?'ok':'bad'}" id="pPill">${b.ok?finLabel(b):'No alcanza'}</span></div>
+    ${hayT?`<label class="f">Lo que pagas a tarjetas al mes: <span class="amt" style="color:var(--ink)" id="pPagoV">${fmt(proj.pago)}</span><input id="pPago" type="range" min="100000" max="2000000" step="50000" value="${proj.pago}"></label>`:''}
+    ${em?`<label class="f">Días extra en ${esc(em.f.nombre.toLowerCase())} al mes: <span class="amt" style="color:var(--ink)" id="pDiasV">${proj.dias} día${proj.dias===1?'':'s'}</span><input id="pDias" type="range" min="0" max="20" step="1" value="${proj.dias}"></label>
+      <div class="grid2" style="align-items:end"><label class="f">Te queda libre por día<input id="pNeto" inputmode="numeric" value="${fmt(proj.netoDia)}"></label><div class="small" id="pExtraV">${proj.extra?`= <b>${fmt(proj.extra)}</b> extra al mes`:''}</div></div>
+      <div class="muted" style="font-size:.78rem">${em.n?`Según tus ${em.n} día${em.n>1?'s':''} registrados.`:'Aún no registras días: escribe cuánto te queda libre en un día normal.'}</div>`
+     :`<label class="f">Plata extra al mes: <span class="amt" style="color:var(--ink)" id="pExtraV">${fmt(proj.extra)}</span><input id="pExtra" type="range" min="0" max="1000000" step="50000" value="${proj.extra}"></label>
+      <div class="muted" style="font-size:.78rem">¿Trabajas por días (moto, domicilios)? Agrégalo en Ajustes → Ingresos extra y aquí lo calculas por días.</div>`}
+    <div id="chartBox">${chartSVG(a,proj.extra?b:null)}</div><div class="small" id="projTxt">${projTxt(a,b)}</div>
+    <div class="muted" style="font-size:.78rem">Lo extra va primero a la deuda con más interés. Incluye cuotas de préstamos, la plata que otros te pasan, cuota de manejo y cargos fijos. Es un estimado: corrígelo con cada extracto.</div></section>`:''}
   ${progsHTML()}
-  ${ds.some(d=>d.tipo==='tarjeta'&&d.saldo>0)?`<section class="card stack"><div class="row"><h2>¿Cuándo quedas libre?</h2><span class="pill ${b.ok?'ok':'bad'}" id="pPill">${b.ok?finLabel(b):'No alcanza'}</span></div>
-    <label class="f">Pago mensual a tarjetas: <span class="amt" style="color:var(--ink)" id="pPagoV">${fmt(proj.pago)}</span><input id="pPago" type="range" min="100000" max="2000000" step="50000" value="${proj.pago}"></label>
-    <label class="f">Extra al mes (moto u otros): <span class="amt" style="color:var(--ink)" id="pExtraV">${fmt(proj.extra)}</span><input id="pExtra" type="range" min="0" max="1000000" step="50000" value="${proj.extra}"></label>
-    ${pe?`<div class="muted small">Tu promedio de ingreso extra es ${fmt(pe.prom)} neto por día trabajado.</div>`:''}
-    <div id="chartBox">${chartSVG(a,proj.extra?b:null)}</div><div class="muted small" id="projTxt">${projTxt(a,b)}</div>
-    <div class="muted" style="font-size:.78rem">Incluye la plata que otros te pasan, cuota de manejo y cargos fijos. Es un estimado: corrígelo con cada extracto.</div></section>`:''}
   <section class="card stack"><div class="row"><h2>Leer un extracto</h2></div><p class="muted small">Sube el PDF del extracto o capturas de la app del banco. Saco saldo, mínimo, fecha y compras, y tú decides si actualizo la deuda.</p><div id="extHost"></div></section>
   <div class="row"><h2>Tus deudas</h2><button class="btn sm" data-action="nuevaDeuda">+ Agregar deuda</button></div>
   ${ds.map(d=>{const pr=d.plan?planResumen(d):null;return `<section class="card stack"><div class="row"><div><h2>${esc(d.nombre)}</h2><div class="muted small">${d.tipo==='tarjeta'?`${((d.tasa||0)*100).toFixed(2)}% mensual · pagas ${fmt(d.pago)} el ${d.dia}`:d.plan?(pr?`Próximo pago ${fmt(pr.prox.monto)} el ${fdate(pr.prox.f)} · faltan ${pr.n} de ${pr.tot} cuotas · sale de ${esc(cuentaN(d.cuenta))}`:'Pagada'):`Cuota ${fmt(d.pago)} el ${d.dia}`}</div></div><div style="text-align:right"><div class="label">Saldo</div><div class="amt" style="font-size:1.25rem;color:var(--debt)">${fmt(d.saldo)}</div></div></div>
@@ -451,7 +470,12 @@ function renderDeudas(){
     <div class="btns">${d.tipo==='tarjeta'?`<button class="btn sm" data-action="tarjeta" data-id="${esc(d.id)}">Compras y quién paga</button>`:''}<button class="btn ${d.tipo==='tarjeta'?'ghost ':''}sm" data-action="abonar" data-id="${esc(d.id)}">Abonar extra</button><button class="btn ghost sm" data-action="saldo" data-id="${esc(d.id)}">Corregir saldo</button><button class="btn ghost sm" data-action="editarDeuda" data-id="${esc(d.id)}">Editar</button></div>
     ${pr&&pr.n>1?`<details><summary class="small">Ver plan de pagos</summary><div class="list">${planDeuda(d).map(x=>`<div class="item"><div class="grow"><div class="t">Cuota ${x.i+1}</div><div class="s">${fdate(x.f)} ${x.f.getFullYear()}</div></div><span class="amt">${fmt(x.monto)}</span></div>`).join('')}</div></details>`:''}</section>`;}).join('')||'<div class="card empty">No tienes deudas registradas. Toca "+ Agregar deuda".</div>'}`;
   if(!extNode){extNode=document.createElement('div');mountExtracto(extNode,()=>render());}$('#extHost').appendChild(extNode);
-  const up=$('#pPago');if(up){const upd=()=>{proj.pago=Number($('#pPago').value);proj.extra=Number($('#pExtra').value);$('#pPagoV').textContent=fmt(proj.pago);$('#pExtraV').textContent=fmt(proj.extra);const x=proyectar(proj.pago,0),y=proyectar(proj.pago,proj.extra);$('#chartBox').innerHTML=chartSVG(x,proj.extra?y:null);$('#projTxt').innerHTML=projTxt(x,y);$('#pPill').textContent=y.ok?finLabel(y):'No alcanza';$('#pPill').className='pill '+(y.ok?'ok':'bad');};up.oninput=upd;$('#pExtra').oninput=upd;}
+  if($('#chartBox')){let tm=null;const upd=()=>{
+      if($('#pPago')){proj.pago=Number($('#pPago').value);$('#pPagoV').textContent=fmt(proj.pago);}
+      if($('#pDias')){proj.dias=Number($('#pDias').value);proj.netoDia=num($('#pNeto').value);proj.extra=proj.dias*proj.netoDia;$('#pDiasV').textContent=`${proj.dias} día${proj.dias===1?'':'s'}`;$('#pExtraV').innerHTML=proj.extra?`= <b>${fmt(proj.extra)}</b> extra al mes`:'';}
+      else if($('#pExtra')){proj.extra=Number($('#pExtra').value);$('#pExtraV').textContent=fmt(proj.extra);}
+      clearTimeout(tm);tm=setTimeout(()=>{const P2=hayT?proj.pago:null;const x=proyectar(P2,0),y=proyectar(P2,proj.extra);$('#chartBox').innerHTML=chartSVG(x,proj.extra?y:null);$('#projTxt').innerHTML=projTxt(x,y);$('#pPill').textContent=y.ok?finLabel(y):'No alcanza';$('#pPill').className='pill '+(y.ok?'ok':'bad');},60);};
+    ['#pPago','#pDias','#pExtra','#pNeto'].forEach(s=>{const el=$(s);if(el)el.addEventListener('input',upd);});}
 }
 /* ===== préstamos y deudas personales con plan de cuotas ===== */
 const CADA_D=[['pago','Cada pago de sueldo'],['quincena','Cada quincena'],['mes','Cada mes'],['semana','Cada semana']];
@@ -538,7 +562,7 @@ function baseDue(d){const t=today();let b=new Date(t.getFullYear(),t.getMonth(),
 function offTarjeta(d,k){const du=dueIn(k,d.dia);if(!du)return null;const b=baseDue(d);const i=(du.getFullYear()*12+du.getMonth())-(b.getFullYear()*12+b.getMonth());return i>=0?i:null;}
 const mesN=(d,i)=>{const b=baseDue(d);return mlabel(new Date(b.getFullYear(),b.getMonth()+i,1));};
 function cobrosTarjetas(k){const c=C(k),out=[];
-  for(const d of deudas().filter(x=>x.tipo==='tarjeta'&&compras(x).some(cp=>duenos(cp).some(o=>o.p!=='yo')))){const i=offTarjeta(d,k);if(i==null)continue;const P=planTarjeta(d);
+  for(const d of deudas().filter(x=>x.tipo==='tarjeta'&&compras(x).some(cp=>duenos(cp).some(o=>o.p!=='yo')))){const i=offTarjeta(d,k);if(i==null)continue;let P=_ptCache&&_ptCache.get(d.id);if(!P){P=planTarjeta(d);if(_ptCache)_ptCache.set(d.id,P);}
     for(const pid of Object.keys(P)){if(pid==='yo')continue;const id=`t-${d.id}-${pid}`;const r=c.cobros[id];const m=P[pid][i]||0;
       const concepto='Su parte de '+d.nombre+' ('+compras(d).filter(cp=>cp.saldo>0&&duenos(cp).some(o=>o.p===pid)).map(cp=>cp.nombre).slice(0,3).join(', ')+')';
       if(r)out.push({id,quien:personaN(pid),concepto,monto:r.monto,destino:d.id,recibido:true,auto:true});else if(m>0&&k>=curKey())out.push({id,quien:personaN(pid),concepto,monto:c.cobrosMonto[id]??m,destino:d.id,recibido:false,auto:true});}}
@@ -622,7 +646,17 @@ function sheetProgPagar(id){const p=progs().find(x=>x.id===id);if(!p)return;
   openSheet(`<div class="stack"><h2>Pagaste: ${esc(p.nombre)}</h2><input id="ppM" class="money" inputmode="numeric" value="${fmt(p.monto)}" aria-label="Valor">${payerHTML('prog',true,ls.get('cc-src-gasto'),'¿Con qué pagaste?')}<p class="muted small">Queda como gasto en ${esc(catN(p.cat))} y se libera lo que tenías apartado (${fmt(p.apartado||0)}).</p><button class="btn" id="ppOk">Registrar</button></div>`,sh=>{bindPayer(sh);
     $('#ppOk').onclick=()=>{const m=num($('#ppM').value);if(!m)return;const pr=readPayer(sh,'prog',m);if(pr.err)return toast(pr.err);
       addMov({id:uid(),t:'gasto',monto:m,cat:p.cat,nota:p.nombre,fecha:iso(today()),fx:[...fxFromParts(pr.parts,-1),{k:'prog',id,d:-(p.apartado||0)},{k:'progHecho',id,d:0}]});closeSheet();toast('Registrado');render();};});}
-function projTxt(a,b){if(!a.ok)return 'Con ese pago los intereses le ganan al abono. Sube el pago mensual.';let t=`Pagando ${fmt(proj.pago)} al mes terminas en <b>${finLabel(a)}</b> y pagas unos ${fmt(a.intereses)} de intereses.`;if(proj.extra&&b.ok&&b.fin!==a.fin){const m=Math.round((cStart(a.fin)-cStart(b.fin))/DAY/30);t+=` Con ${fmt(proj.extra)} extra terminas en <b>${finLabel(b)}</b>${m>0?`, ${m} mes${m>1?'es':''} antes`:''}, y ahorras ${fmt(a.intereses-b.intereses)}.`;}return t;}
+function projTxt(a,b){
+  const hayT=deudas().some(d=>d.tipo==='tarjeta'&&d.saldo>0);
+  if(!a.ok&&!(proj.extra&&b.ok))return 'Con lo que pagas hoy, los intereses le ganan al abono. Sube el pago mensual o suma días extra.';
+  let t=a.ok?`${hayT?`Pagando ${fmt(proj.pago)} al mes a tarjetas`:'Con tus cuotas actuales'} quedas libre de deudas en <b>${finLabel(a)}</b>${a.intereses>500?` y pagas unos ${fmt(a.intereses)} de intereses`:''}.`:'Con lo que pagas hoy no alcanzas a terminar.';
+  if(proj.extra&&b.ok){const ex=proj.dias?`${proj.dias} día${proj.dias>1?'s':''} extra al mes (${fmt(proj.extra)})`:`${fmt(proj.extra)} extra al mes`;
+    if(!a.ok)t+=` Con ${ex} sí terminas, en <b>${finLabel(b)}</b>.`;
+    else if(b.fin!==a.fin){const m=Math.round((cStart(a.fin)-cStart(b.fin))/DAY/30);t+=` Con ${ex} terminas en <b>${finLabel(b)}</b>${m>0?`: ${m} mes${m>1?'es':''} antes`:''}${a.intereses-b.intereses>500?` y te ahorras ${fmt(a.intereses-b.intereses)} en intereses`:''}.`;}
+    else t+=` Con ${ex} terminas el mismo mes${a.intereses-b.intereses>500?`, pero te ahorras ${fmt(a.intereses-b.intereses)} en intereses`:''}.`;}
+  const r=proj.extra&&b.ok?b:a;const lista=deudas().filter(d=>d.saldo>0&&r.finD&&r.finD[d.id]).sort((x,y)=>r.finD[x.id].localeCompare(r.finD[y.id]));
+  if(lista.length>1)t+=`<div class="muted" style="margin-top:6px">${lista.map(d=>`${esc(d.nombre)}: ${mlabel(cEnd(r.finD[d.id]))}`).join(' · ')}</div>`;
+  return t;}
 function chartSVG(a,b){
   const W=340,H=170,L=44,R=10,T=12,Bm=26,pts=a.pts,n=Math.max(pts.length,b?b.pts.length:0);if(n<2)return '';
   const max=Math.max(...pts.map(p=>p.B),...(b?b.pts.map(p=>p.B):[0]),1);const x=i=>L+(W-L-R)*i/(n-1),y=v=>T+(H-T-Bm)*(1-v/max);
