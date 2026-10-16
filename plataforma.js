@@ -4,7 +4,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.0.0/firebas
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, signOut } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, collection, doc, setDoc, deleteDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-ai.js';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app-check.js';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app-check.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDchcJkzpQZeEgfsrq-WPnX4-SD7dIsoto',
@@ -16,9 +16,9 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-/* App Check con reCAPTCHA v3: demuestra que las llamadas a la IA vienen de esta página y no de un robot. */
+/* App Check con Fraud Defense (reCAPTCHA Enterprise): demuestra que las llamadas a la IA vienen de esta página y no de un robot. */
 const RECAPTCHA_SITE_KEY = '6LeWsvItAAAAADnCiAIs-ywkCU552rxlKRDV74ym';
-try { initializeAppCheck(app, { provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true }); } catch (e) { console.error('App Check', e); }
+try { initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true }); } catch (e) { console.error('App Check', e); }
 const auth = getAuth(app);
 auth.languageCode = 'es';
 const fdb = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
